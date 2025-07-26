@@ -1,0 +1,33 @@
+# Config
+config.json
+
+# Logs
+*.log
+logs/
+
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Output of the go coverage tool
+*.cover
+
+# Dependency directories (vendor)
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Go build artifacts
+bin/
+build/
+dist/
+
+# OS generated files
+.DS_Store
+Thumbs.db
