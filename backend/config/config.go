@@ -45,7 +45,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("database.host", "localhost")
 	viper.SetDefault("database.port", "5432")
 	viper.SetDefault("database.user", "postgres")
-	viper.SetDefault("database.dbname", "servermonitor")
+	viper.SetDefault("database.dbname", "monitaur")
 	viper.SetDefault("database.sslmode", "disable")
 
 	// Allow environment variables
@@ -77,7 +77,7 @@ func CreateSampleConfig() error {
 	viper.Set("database.port", "5432")
 	viper.Set("database.user", "postgres")
 	viper.Set("database.password", "your_password_here")
-	viper.Set("database.dbname", "servermonitor")
+	viper.Set("database.dbname", "monitaur")
 	viper.Set("database.sslmode", "disable")
 
 	viper.Set("firebase.service_account_path", "./firebase-service-account.json")

@@ -1,26 +1,29 @@
 import {
   CheckCircleIcon,
+  CircleStackIcon,
   ClockIcon,
   ComputerDesktopIcon,
+  CpuChipIcon,
   ExclamationTriangleIcon,
+  PlusIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
-import api from '../config/api';
+import { Link } from 'react-router-dom';
+import { dashboardAPI } from '../apis';
+import LoadingSpinner from './LoadingSpinner';
 
 const Dashboard = () => {
   const { data: dashboardData, isLoading, error } = useQuery({
     queryKey: ['dashboard'],
-    queryFn: async () => {
-      const response = await api.get('/dashboard');
-      return response.data;
-    },
+    queryFn: dashboardAPI.getDashboard,
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+        <LoadingSpinner size="lg" />
       </div>
     );
   }
@@ -28,12 +31,12 @@ const Dashboard = () => {
   if (error) {
     return (
       <div className="bg-danger-50 border border-danger-200 text-danger-700 px-4 py-3 rounded">
-        Error loading dashboard: {error.message}
+        Error loading dashboard: {error.response?.data?.error || error.message}
       </div>
     );
   }
 
-  const { summary, servers, recent_alerts } = dashboardData || {};
+  const { summary, servers, recent_alerts, system_health } = dashboardData?.data || {};
 
   const stats = [
     {
@@ -66,12 +69,38 @@ const Dashboard = () => {
     },
   ];
 
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 B';
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const formatUptime = (seconds) => {
+    if (!seconds) return '0m';
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  };
+
   return (
     <div className="space-y-6">
+      {/* Welcome Message */}
+      <div className="bg-gradient-to-r from-primary-600 to-primary-700 rounded-lg p-6 text-white">
+        <h2 className="text-2xl font-bold mb-2">Welcome to Monitaur</h2>
+        <p className="text-primary-100">
+          Monitor your servers in real-time with comprehensive metrics and alerts.
+        </p>
+      </div>
+
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
-          <div key={stat.name} className="card">
+          <div key={stat.name} className="card hover:shadow-md transition-shadow">
             <div className="flex items-center">
               <div className={`p-3 rounded-lg ${stat.bgColor}`}>
                 <stat.icon className={`w-6 h-6 ${stat.color}`} />
@@ -84,6 +113,48 @@ const Dashboard = () => {
           </div>
         ))}
       </div>
+
+      {/* System Health Overview */}
+      {system_health && summary?.online_servers > 0 && (
+        <div className="card">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">System Health Overview</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-blue-50 rounded-lg">
+                <CpuChipIcon className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Average CPU</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {system_health.average_cpu?.toFixed(1)}%
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-green-50 rounded-lg">
+                <CircleStackIcon className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Average Memory</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {system_health.average_memory?.toFixed(1)}%
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-yellow-50 rounded-lg">
+                <ServerIcon className="w-5 h-5 text-yellow-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-500">Average Disk</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {system_health.average_disk?.toFixed(1)}%
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Servers List */}
@@ -155,6 +226,25 @@ const Dashboard = () => {
               <p className="text-sm text-gray-400">All systems running smoothly</p>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="card">
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
+        <div className="flex flex-wrap gap-3">
+          <Link to="/servers" className="btn btn-primary">
+            <PlusIcon className="w-4 h-4 mr-2" />
+            Add Server
+          </Link>
+          <Link to="/alerts" className="btn btn-secondary">
+            <ExclamationTriangleIcon className="w-4 h-4 mr-2" />
+            View Alerts
+          </Link>
+          <Link to="/settings" className="btn btn-secondary">
+            <CpuChipIcon className="w-4 h-4 mr-2" />
+            Settings
+          </Link>
         </div>
       </div>
     </div>

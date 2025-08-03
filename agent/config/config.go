@@ -9,11 +9,11 @@ import (
 )
 
 type Config struct {
-	Token              string            `json:"token" mapstructure:"token"`
-	APIEndpoint        string            `json:"api_endpoint" mapstructure:"api_endpoint"`
-	CollectionInterval int               `json:"collection_interval" mapstructure:"collection_interval"`
-	ServerName         string            `json:"server_name" mapstructure:"server_name"`
-	AlertThresholds    AlertThresholds   `json:"alert_thresholds" mapstructure:"alert_thresholds"`
+	Token              string          `json:"token" mapstructure:"token"`
+	APIEndpoint        string          `json:"api_endpoint" mapstructure:"api_endpoint"`
+	CollectionInterval int             `json:"collection_interval" mapstructure:"collection_interval"`
+	ServerName         string          `json:"server_name" mapstructure:"server_name"`
+	AlertThresholds    AlertThresholds `json:"alert_thresholds" mapstructure:"alert_thresholds"`
 }
 
 type AlertThresholds struct {
@@ -26,8 +26,8 @@ func LoadConfig() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("json")
 	viper.AddConfigPath(".")
-	viper.AddConfigPath("/etc/servermonitor/")
-	viper.AddConfigPath("$HOME/.servermonitor/")
+	viper.AddConfigPath("/etc/monitaur/")
+	viper.AddConfigPath("$HOME/.monitaur/")
 
 	// Set defaults
 	viper.SetDefault("api_endpoint", "ws://localhost:8080/agent/connect")
