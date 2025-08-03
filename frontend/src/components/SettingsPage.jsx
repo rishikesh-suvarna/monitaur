@@ -226,7 +226,7 @@ const SettingsPage = () => {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h4 className="text-sm font-medium text-blue-900 mb-2">API Endpoint</h4>
                   <code className="block text-sm text-blue-800 bg-blue-100 p-2 rounded">
-                    http://localhost:8080/api/v1
+                    ${import.meta.env.VITE_APP_SERVER_URL}/api/v1
                   </code>
                 </div>
 
