@@ -1,0 +1,11 @@
+{
+  "token": "your-server-token-here",
+  "api_endpoint": "wss://your-domain.com/agent/connect",
+  "collection_interval": 5,
+  "server_name": "",
+  "alert_thresholds": {
+    "cpu": 80,
+    "memory": 85,
+    "disk": 90
+  }
+}

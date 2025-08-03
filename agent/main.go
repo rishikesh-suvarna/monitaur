@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -13,13 +14,47 @@ import (
 	"agent/metrics"
 )
 
+var (
+	Version = "dev" // Set during build
+)
+
 func main() {
 	var (
 		createConfig = flag.Bool("init", false, "Create sample config.json file")
+		version      = flag.Bool("version", false, "Show version information")
+		showHelp     = flag.Bool("help", false, "Show help information")
 	)
 	flag.Parse()
 
-	// Create sample config
+	// Show version
+	if *version {
+		fmt.Printf("Monitaur Agent v%s\n", Version)
+		return
+	}
+
+	// Show help
+	if *showHelp {
+		fmt.Printf("Monitaur Agent v%s\n\n", Version)
+		fmt.Println("Usage:")
+		fmt.Println("  monitaur-agent [options]")
+		fmt.Println("")
+		fmt.Println("Options:")
+		fmt.Println("  -init           Create sample config.json file")
+		fmt.Println("  -config string  Path to config file")
+		fmt.Println("  -version        Show version information")
+		fmt.Println("  -help           Show this help message")
+		fmt.Println("")
+		fmt.Println("Configuration:")
+		fmt.Println("  The agent looks for config.json in:")
+		fmt.Println("  - Current directory")
+		fmt.Println("  - /etc/monitaur/")
+		fmt.Println("  - ~/.monitaur/")
+		fmt.Println("")
+		fmt.Println("For more information, visit: https://github.com/yourusername/monitaur")
+		return
+	}
+
+	// Create sample config if requested
 	if *createConfig {
 		if err := config.CreateSampleConfig(); err != nil {
 			log.Fatalf("Failed to create config: %v", err)
@@ -34,7 +69,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	log.Printf("Starting Server Monitor Agent for: %s", cfg.ServerName)
+	log.Printf("Starting Monitaur Agent v%s for: %s", Version, cfg.ServerName)
 	log.Printf("Collection interval: %d seconds", cfg.CollectionInterval)
 
 	// Initialize metrics collector

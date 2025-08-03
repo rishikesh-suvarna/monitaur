@@ -39,7 +39,7 @@ func LoadConfig() (*Config, error) {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			return nil, fmt.Errorf("config file not found. Please create config.json with your token")
+			return nil, fmt.Errorf("config file not found. Please create config.json with your token or run with -init flag")
 		}
 		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
@@ -53,6 +53,11 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("token is required in config.json")
 	}
 
+	// Use hostname as server name if not specified
+	if config.ServerName == "" {
+		config.ServerName = getHostname()
+	}
+
 	return &config, nil
 }
 
@@ -64,6 +69,7 @@ func getHostname() string {
 	return hostname
 }
 
+// CreateSampleConfig creates a sample configuration file
 func CreateSampleConfig() error {
 	config := Config{
 		Token:              "your-server-token-here",
