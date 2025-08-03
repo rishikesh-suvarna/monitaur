@@ -38,6 +38,18 @@ func NewDatabase(cfg *config.DatabaseConfig) (*Database, error) {
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
+	// log database name
+	log.Printf("Connected to PostgreSQL database: %s", cfg.DBName)
+	// log database host
+	log.Printf("Database host: %s", cfg.Host)
+	// log database port
+	log.Printf("Database port: %s", cfg.Port)
+	// log database user
+	log.Printf("Database user: %s", cfg.User)
+	// log database SSL mode
+	log.Printf("Database SSL mode: %s", cfg.SSLMode)
+
+	// log successful connection
 	log.Println("Connected to PostgreSQL database")
 
 	return &Database{DB: db}, nil

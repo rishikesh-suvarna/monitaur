@@ -71,6 +71,9 @@ func (h *WebSocketHandler) HandleAgentConnection(c *gin.Context) {
 		return
 	}
 
+	// log server connection
+	log.Printf("Agent connecting for server: %s (ID: %d)", server.Name, server.ID)
+
 	// Update server name if provided and different
 	if serverName != "" && server.Name != serverName {
 		server.Name = serverName
