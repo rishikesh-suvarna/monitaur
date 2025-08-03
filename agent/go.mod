@@ -1,8 +1,6 @@
 module agent
 
-go 1.21.0
-
-toolchain go1.24.5
+go 1.24
 
 require (
 	github.com/gorilla/websocket v1.5.3
