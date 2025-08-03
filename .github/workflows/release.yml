@@ -1,0 +1,339 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set package name
+      id: package
+      run: |
+        PACKAGE_NAME="monitaur-agent_${{ steps.version.outputs.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+        echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_OUTPUT
+
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          echo "ASSET_NAME=${PACKAGE_NAME}.zip" >> $GITHUB_OUTPUT
+          echo "BINARY_NAME=monitaur-agent.exe" >> $GITHUB_OUTPUT
+        else
+          echo "ASSET_NAME=${PACKAGE_NAME}.tar.gz" >> $GITHUB_OUTPUT
+          echo "BINARY_NAME=monitaur-agent" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build binary
+      working-directory: ./agent
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        VERSION: ${{ steps.version.outputs.VERSION }}
+      run: |
+        # Build
+        go build -ldflags="-s -w -X main.Version=${VERSION}" -o ${{ steps.package.outputs.BINARY_NAME }} .
+
+        # Create package directory
+        mkdir -p ${{ steps.package.outputs.PACKAGE_NAME }}
+
+        # Copy files
+        cp ${{ steps.package.outputs.BINARY_NAME }} ${{ steps.package.outputs.PACKAGE_NAME }}/
+        cp config.json.example ${{ steps.package.outputs.PACKAGE_NAME }}/
+
+        # Create README
+        cat > ${{ steps.package.outputs.PACKAGE_NAME }}/README.md << 'EOF'
+        # Monitaur Agent
+
+        Server monitoring agent for Monitaur.
+
+        ## Quick Start
+
+        1. Copy the configuration template:
+           ```bash
+           cp config.json.example config.json
+           ```
+
+        2. Edit `config.json` with your server token from the Monitaur dashboard
+
+        3. Run the agent:
+           ```bash
+           ./${{ steps.package.outputs.BINARY_NAME }}
+           ```
+
+        ## Installation as Service (Linux)
+
+        ```bash
+        # Copy binary to system path
+        sudo cp ${{ steps.package.outputs.BINARY_NAME }} /usr/local/bin/
+        sudo chmod +x /usr/local/bin/monitaur-agent
+
+        # Create config directory
+        sudo mkdir -p /etc/monitaur
+        sudo cp config.json /etc/monitaur/
+
+        # Create systemd service
+        sudo tee /etc/systemd/system/monitaur-agent.service > /dev/null <<'SERVICEEOF'
+        [Unit]
+        Description=Monitaur Server Monitoring Agent
+        After=network.target
+
+        [Service]
+        Type=simple
+        User=monitaur
+        WorkingDirectory=/etc/monitaur
+        ExecStart=/usr/local/bin/monitaur-agent
+        Restart=always
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+        SERVICEEOF
+
+        # Create user and set permissions
+        sudo useradd -r -s /bin/false monitaur
+        sudo chown -R monitaur:monitaur /etc/monitaur
+
+        # Start service
+        sudo systemctl daemon-reload
+        sudo systemctl enable monitaur-agent
+        sudo systemctl start monitaur-agent
+        ```
+
+        ## Configuration
+
+        Edit `config.json`:
+
+        ```json
+        {
+          "token": "your-server-token-here",
+          "api_endpoint": "wss://your-domain.com/agent/connect",
+          "collection_interval": 5,
+          "server_name": "my-server",
+          "alert_thresholds": {
+            "cpu": 80,
+            "memory": 85,
+            "disk": 90
+          }
+        }
+        ```
+
+        ## Commands
+
+        ```bash
+        # Show version
+        ./${{ steps.package.outputs.BINARY_NAME }} -version
+
+        # Show help
+        ./${{ steps.package.outputs.BINARY_NAME }} -help
+
+        # Create sample config
+        ./${{ steps.package.outputs.BINARY_NAME }} -init
+        ```
+        EOF
+
+        # Create install script for Unix systems
+        if [ "${{ matrix.goos }}" != "windows" ]; then
+          cat > ${{ steps.package.outputs.PACKAGE_NAME }}/install.sh << 'EOF'
+        #!/bin/bash
+        set -e
+
+        INSTALL_DIR="/usr/local/bin"
+        CONFIG_DIR="/etc/monitaur"
+        SERVICE_DIR="/etc/systemd/system"
+
+        echo "Installing Monitaur Agent..."
+
+        # Check if running as root
+        if [ "$EUID" -ne 0 ]; then
+            echo "Please run as root (use sudo)"
+            exit 1
+        fi
+
+        # Copy binary
+        cp monitaur-agent $INSTALL_DIR/
+        chmod +x $INSTALL_DIR/monitaur-agent
+
+        # Create config directory
+        mkdir -p $CONFIG_DIR
+        if [ ! -f $CONFIG_DIR/config.json ]; then
+            cp config.json.example $CONFIG_DIR/config.json
+            echo "Created config template at $CONFIG_DIR/config.json"
+            echo "Please edit this file with your server token"
+        fi
+
+        # Create systemd service
+        cat > $SERVICE_DIR/monitaur-agent.service << 'SERVICEEOF'
+        [Unit]
+        Description=Monitaur Server Monitoring Agent
+        After=network.target
+
+        [Service]
+        Type=simple
+        User=monitaur
+        WorkingDirectory=/etc/monitaur
+        ExecStart=/usr/local/bin/monitaur-agent
+        Restart=always
+        RestartSec=5
+
+        [Install]
+        WantedBy=multi-user.target
+        SERVICEEOF
+
+        # Create user for service
+        useradd -r -s /bin/false monitaur 2>/dev/null || true
+        chown -R monitaur:monitaur $CONFIG_DIR
+
+        # Reload systemd
+        systemctl daemon-reload
+
+        echo "Installation complete!"
+        echo ""
+        echo "Next steps:"
+        echo "1. Edit /etc/monitaur/config.json with your server token"
+        echo "2. Start the service: sudo systemctl start monitaur-agent"
+        echo "3. Enable auto-start: sudo systemctl enable monitaur-agent"
+        echo "4. Check status: sudo systemctl status monitaur-agent"
+        EOF
+          chmod +x ${{ steps.package.outputs.PACKAGE_NAME }}/install.sh
+        fi
+
+    - name: Create archive
+      working-directory: ./agent
+      run: |
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          zip -r ${{ steps.package.outputs.ASSET_NAME }} ${{ steps.package.outputs.PACKAGE_NAME }}
+        else
+          tar -czf ${{ steps.package.outputs.ASSET_NAME }} ${{ steps.package.outputs.PACKAGE_NAME }}
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ steps.package.outputs.ASSET_NAME }}
+        path: ./agent/${{ steps.package.outputs.ASSET_NAME }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: ./release-assets
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        release_name: Monitaur Agent ${{ steps.version.outputs.VERSION }}
+        body: |
+          ## Monitaur Agent ${{ steps.version.outputs.VERSION }}
+
+          ### Installation
+
+          **Quick Install (Linux):**
+          ```bash
+          curl -sSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sudo bash -s ${{ steps.version.outputs.VERSION }}
+          ```
+
+          **Manual Installation:**
+          1. Download the appropriate binary for your platform below
+          2. Extract the archive
+          3. Run `./install.sh` (Linux/macOS) or follow the README instructions
+
+          ### Supported Platforms
+          - Linux (AMD64, ARM64)
+          - macOS (Intel, Apple Silicon)
+          - Windows (AMD64)
+
+          ### What's Changed
+          - Server monitoring with real-time metrics
+          - CPU, Memory, Disk, and Network monitoring
+          - Configurable alert thresholds
+          - WebSocket connection to Monitaur dashboard
+          - Systemd service support (Linux)
+
+          Full documentation: https://github.com/${{ github.repository }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Assets
+      run: |
+        for asset_dir in ./release-assets/*/; do
+          if [ -d "$asset_dir" ]; then
+            for file in "$asset_dir"*; do
+              if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                echo "Uploading $filename..."
+
+                # Determine content type
+                case "$filename" in
+                  *.tar.gz) content_type="application/gzip" ;;
+                  *.zip) content_type="application/zip" ;;
+                  *) content_type="application/octet-stream" ;;
+                esac
+
+                curl \
+                  -X POST \
+                  -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                  -H "Content-Type: $content_type" \
+                  --data-binary @"$file" \
+                  "${{ steps.create_release.outputs.upload_url }}?name=$filename"
+              fi
+            done
+          fi
+        done
