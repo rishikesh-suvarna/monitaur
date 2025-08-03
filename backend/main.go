@@ -84,6 +84,7 @@ func main() {
 	// API routes (require Firebase authentication)
 	api := router.Group("/api/v1")
 	api.Use(firebaseAuth.AuthMiddleware())
+	api.Use(firebaseAuth.EnsureUserExists(db))
 	{
 		// User routes
 		api.GET("/profile", apiHandler.GetUserProfile)
@@ -105,6 +106,10 @@ func main() {
 		api.GET("/servers/:id/dashboard", dashboardHandler.GetServerDashboard)
 		api.GET("/servers/:id/chart", dashboardHandler.GetMetricsChart)
 	}
+
+	// Serve static files for frontend (optional)
+	router.Static("/static", "./static")
+	router.StaticFile("/", "./static/index.html")
 
 	// Start server
 	serverAddr := cfg.Server.Host + ":" + cfg.Server.Port

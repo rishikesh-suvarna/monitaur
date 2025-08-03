@@ -38,19 +38,18 @@ func NewDatabase(cfg *config.DatabaseConfig) (*Database, error) {
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	// log database name
-	log.Printf("Connected to PostgreSQL database: %s", cfg.DBName)
-	// log database host
-	log.Printf("Database host: %s", cfg.Host)
-	// log database port
-	log.Printf("Database port: %s", cfg.Port)
-	// log database user
-	log.Printf("Database user: %s", cfg.User)
-	// log database SSL mode
-	log.Printf("Database SSL mode: %s", cfg.SSLMode)
-
-	// log successful connection
-	log.Println("Connected to PostgreSQL database")
+	// Check what database we're actually connected to
+	var actualDBName string
+	err = db.Raw("SELECT current_database()").Scan(&actualDBName).Error
+	if err != nil {
+		log.Printf("Warning: Could not determine connected database name: %v", err)
+		log.Printf("Connected to PostgreSQL database (config says: %s)", cfg.DBName)
+	} else {
+		log.Printf("Connected to PostgreSQL database: %s", actualDBName)
+		if actualDBName != cfg.DBName {
+			log.Printf("WARNING: Connected to '%s' but config specifies '%s'", actualDBName, cfg.DBName)
+		}
+	}
 
 	return &Database{DB: db}, nil
 }
@@ -130,15 +129,21 @@ func (d *Database) GetOrCreateUser(uid, email string) (*models.User, error) {
 	user, err := d.GetUserByUID(uid)
 	if err == gorm.ErrRecordNotFound {
 		// Create new user
+		log.Printf("Creating new user: %s (%s)", email, uid)
 		user = &models.User{
 			FirebaseUID: uid,
 			Email:       email,
 		}
 		if err := d.CreateUser(user); err != nil {
+			log.Printf("Failed to create user: %v", err)
 			return nil, err
 		}
+		log.Printf("Successfully created user with ID: %d", user.ID)
 	} else if err != nil {
+		log.Printf("Error getting user: %v", err)
 		return nil, err
+	} else {
+		log.Printf("Found existing user: %s (ID: %d)", user.Email, user.ID)
 	}
 	return user, nil
 }

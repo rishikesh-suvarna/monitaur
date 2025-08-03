@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"backend/config"
+	"backend/models"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
@@ -104,7 +105,40 @@ func (f *FirebaseAuth) AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// OptionalAuthMiddleware is similar to AuthMiddleware but doesn't require auth
+// EnsureUserExists middleware ensures the authenticated user exists in the database
+func (f *FirebaseAuth) EnsureUserExists(db interface{}) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get user info from context (set by AuthMiddleware)
+		userClaims, exists := GetUserFromContext(c)
+		if !exists {
+			c.JSON(500, gin.H{"error": "User context not found"})
+			c.Abort()
+			return
+		}
+
+		// Type assert to get our specific database type
+		type DatabaseInterface interface {
+			GetOrCreateUser(uid, email string) (*models.User, error)
+		}
+
+		database, ok := db.(DatabaseInterface)
+		if !ok {
+			c.JSON(500, gin.H{"error": "Database interface error"})
+			c.Abort()
+			return
+		}
+
+		// Create or get user in database
+		_, err := database.GetOrCreateUser(userClaims.UID, userClaims.Email)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to create user record", "details": err.Error()})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
 func (f *FirebaseAuth) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")

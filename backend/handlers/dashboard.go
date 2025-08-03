@@ -56,6 +56,7 @@ type SystemHealth struct {
 // GetDashboardData returns comprehensive dashboard data
 func (h *DashboardHandler) GetDashboardData(c *gin.Context) {
 	userClaims, exists := auth.GetUserFromContext(c)
+
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
