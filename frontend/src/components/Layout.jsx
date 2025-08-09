@@ -69,7 +69,7 @@ const Layout = ({ children }) => {
           <div className="px-6 py-4 border-t border-primary-200">
             <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-light text-black truncate uppercase tracking-wide">
+                <p className="text-xs font-light text-black truncate tracking-wide">
                   {user?.email}
                 </p>
                 <p className="text-xs text-primary-600 truncate mt-1">
