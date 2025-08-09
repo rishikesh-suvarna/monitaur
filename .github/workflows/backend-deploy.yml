@@ -1,0 +1,142 @@
+name: Deploy Monitaur Backend
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build and Deploy to Ubuntu Server
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+
+    - name: Build backend binary
+      working-directory: ./backend
+      run: |
+        echo "Building backend for Linux AMD64..."
+        go mod download
+        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o monitaur-backend .
+
+        # Verify binary was created
+        ls -la monitaur-backend
+        file monitaur-backend
+
+    - name: Deploy to server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Starting backend deployment"
+
+          # Create temporary directory
+          TEMP_DIR="/tmp/monitaur-deploy-$(date +%s)"
+          mkdir -p $TEMP_DIR
+          echo "Created temporary directory: $TEMP_DIR"
+
+          # Backup current binary (optional)
+          if [ -f /usr/local/bin/monitaur-backend ]; then
+            echo "Backing up current binary..."
+            sudo cp /usr/local/bin/monitaur-backend $TEMP_DIR/monitaur-backend.backup
+          fi
+
+    - name: Copy binary to server
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        source: "./backend/monitaur-backend"
+        target: "/tmp/"
+        strip_components: 1
+
+    - name: Install and restart service
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Installing new binary..."
+
+          # Stop the service first
+          echo "Stopping monitaur-backend service..."
+          sudo systemctl stop monitaur-backend || echo "Service was not running"
+
+          # Replace binary
+          sudo mv /tmp/monitaur-backend /usr/local/bin/
+          sudo chmod +x /usr/local/bin/monitaur-backend
+          sudo chown root:root /usr/local/bin/monitaur-backend
+
+          # Verify binary
+          echo "Verifying binary..."
+          /usr/local/bin/monitaur-backend -version || echo "Version check failed"
+
+          # Start the service
+          echo "▶️  Starting monitaur-backend service..."
+          sudo systemctl start monitaur-backend
+
+          # Wait for service to start
+          sleep 5
+
+          # Check service status
+          echo "Checking service status..."
+          if sudo systemctl is-active --quiet monitaur-backend; then
+            echo "Service is running successfully!"
+            sudo systemctl status monitaur-backend --no-pager -l
+          else
+            echo "Service failed to start!"
+            echo "Service logs:"
+            sudo journalctl -u monitaur-backend --no-pager -l -n 20
+            exit 1
+          fi
+
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          sleep 3
+          if curl -f http://localhost:8080/health; then
+            echo "Health check passed!"
+          else
+            echo "Health check failed, but service is running"
+          fi
+
+          echo "Deployment completed successfully!"
+
+    - name: Cleanup on failure
+      if: failure()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Deployment failed, attempting rollback..."
+
+          # Restore backup if it exists
+          if [ -f /tmp/monitaur-deploy-*/monitaur-backend.backup ]; then
+            echo "Restoring backup..."
+            sudo cp /tmp/monitaur-deploy-*/monitaur-backend.backup /usr/local/bin/monitaur-backend
+            sudo chmod +x /usr/local/bin/monitaur-backend
+            sudo systemctl restart monitaur-backend
+            echo "Rollback completed"
+          fi
+
+          # Cleanup temp files
+          rm -rf /tmp/monitaur-deploy-*
+          rm -f /tmp/monitaur-backend
