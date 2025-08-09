@@ -1,0 +1,276 @@
+name: Deploy Monitaur Frontend
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build and Deploy Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'yarn'
+        cache-dependency-path: './frontend/yarn.lock'
+
+    - name: Install dependencies
+      working-directory: ./frontend
+      run: |
+        echo "Installing dependencies with Yarn..."
+        yarn install --frozen-lockfile --prefer-offline
+
+    - name: Build frontend
+      working-directory: ./frontend
+      env:
+        # Set production environment variables
+        NODE_ENV: production
+        VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+        VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+        VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+        VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+        VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+        VITE_APP_SERVER_URL: ${{ vars.VITE_APP_SERVER_URL }}
+        VITE_APP_SERVER_WS_URL: ${{ vars.VITE_APP_SERVER_WS_URL }}
+      run: |
+        echo "Building frontend for production..."
+        yarn build
+
+        # Verify build was created
+        ls -la dist/
+        echo "Build size:"
+        du -sh dist/
+
+    - name: Create deployment archive
+      working-directory: ./frontend
+      run: |
+        echo "Creating deployment archive..."
+        tar -czf frontend-build.tar.gz -C dist .
+        ls -la frontend-build.tar.gz
+
+    - name: Backup current frontend
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Starting frontend deployment..."
+
+          # Create backup of current frontend
+          BACKUP_DIR="/tmp/frontend-backup-$(date +%s)"
+          sudo mkdir -p $BACKUP_DIR
+
+          if [ -d "/var/www/monitaur" ]; then
+            echo "Backing up current frontend..."
+            sudo cp -r /var/www/monitaur/* $BACKUP_DIR/ 2>/dev/null || echo "No existing files to backup"
+            echo "Backup created at: $BACKUP_DIR"
+          fi
+
+          # Store backup path for potential rollback
+          echo $BACKUP_DIR > /tmp/latest-frontend-backup
+
+    - name: Copy build to server
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        source: "./frontend/frontend-build.tar.gz"
+        target: "/tmp/"
+        strip_components: 1
+
+    - name: Deploy frontend
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Deploying new frontend..."
+
+          # Create/ensure web directory exists
+          sudo mkdir -p /var/www/monitaur
+
+          # Clear current frontend (but keep backup)
+          sudo rm -rf /var/www/monitaur/*
+
+          # Extract new build
+          cd /var/www/monitaur
+          sudo tar -xzf /tmp/frontend-build.tar.gz
+
+          # Set proper ownership and permissions
+          sudo chown -R www-data:www-data /var/www/monitaur
+          sudo find /var/www/monitaur -type d -exec chmod 755 {} \;
+          sudo find /var/www/monitaur -type f -exec chmod 644 {} \;
+
+          echo "Frontend files deployed successfully"
+
+          # Verify deployment
+          echo "Verifying deployment..."
+          ls -la /var/www/monitaur/
+
+          if [ -f "/var/www/monitaur/index.html" ]; then
+            echo "index.html found"
+          else
+            echo "index.html not found!"
+            exit 1
+          fi
+
+    - name: Test Nginx configuration and reload
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Testing Nginx configuration..."
+
+          # Test Nginx config
+          if sudo nginx -t; then
+            echo "Nginx configuration is valid"
+
+            # Reload Nginx to pick up any changes
+            echo "Reloading Nginx..."
+            sudo systemctl reload nginx
+
+            # Verify Nginx is running
+            if sudo systemctl is-active --quiet nginx; then
+              echo "Nginx is running"
+            else
+              echo "Nginx is not running!"
+              sudo systemctl status nginx --no-pager -l
+              exit 1
+            fi
+          else
+            echo "Nginx configuration test failed!"
+            exit 1
+          fi
+
+    - name: Test frontend deployment
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Testing frontend deployment..."
+
+          # Test local access to index.html
+          if curl -f -s http://localhost/; then
+            echo "Frontend accessible locally"
+          else
+            echo "Frontend not accessible locally"
+          fi
+
+          # Test HTTPS access (if SSL is configured)
+          if curl -f -s -k https://localhost/; then
+            echo "Frontend accessible via HTTPS"
+          else
+            echo "Frontend not accessible via HTTPS"
+          fi
+
+          # Check for common frontend files
+          echo "Frontend files verification:"
+          for file in index.html assets/; do
+            if [ -e "/var/www/monitaur/$file" ]; then
+              echo "$file exists"
+            else
+              echo "$file missing"
+            fi
+          done
+
+    - name: Cleanup deployment files
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Cleaning up deployment files..."
+
+          # Remove deployment archive
+          rm -f /tmp/frontend-build.tar.gz
+
+          # Keep only the latest 3 backups
+          cd /tmp
+          ls -dt frontend-backup-* 2>/dev/null | tail -n +4 | xargs -r sudo rm -rf
+
+          echo "Cleanup completed"
+          echo "Frontend deployment successful!"
+
+    - name: Rollback on failure
+      if: failure()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Deployment failed, attempting rollback..."
+
+          # Get latest backup path
+          if [ -f "/tmp/latest-frontend-backup" ]; then
+            BACKUP_DIR=$(cat /tmp/latest-frontend-backup)
+
+            if [ -d "$BACKUP_DIR" ] && [ "$(ls -A $BACKUP_DIR)" ]; then
+              echo "Restoring from backup: $BACKUP_DIR"
+
+              # Clear current frontend
+              sudo rm -rf /var/www/monitaur/*
+
+              # Restore backup
+              sudo cp -r $BACKUP_DIR/* /var/www/monitaur/
+              sudo chown -R www-data:www-data /var/www/monitaur
+
+              # Reload Nginx
+              sudo systemctl reload nginx
+
+              echo "Rollback completed successfully"
+            else
+              echo "No valid backup found for rollback"
+            fi
+          else
+            echo "No backup reference found"
+          fi
+
+          # Cleanup failed deployment files
+          rm -f /tmp/frontend-build.tar.gz
+          rm -f /tmp/latest-frontend-backup
+
+    - name: Notify deployment status
+      if: always()
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        script: |
+          echo "Final deployment status:"
+          echo "Frontend URL: https://monitaur.rishikeshsuvarna.com"
+          echo "Deployment path: /var/www/monitaur"
+          echo "Nginx status: $(sudo systemctl is-active nginx)"
+
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "Deployment completed successfully!"
+          else
+            echo "Deployment failed!"
+          fi
