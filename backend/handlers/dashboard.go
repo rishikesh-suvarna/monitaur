@@ -371,7 +371,7 @@ func calculateMetricsStatistics(metrics []models.Metric) map[string]interface{} 
 }
 
 func formatChartData(metrics []models.Metric, metricType string) []map[string]interface{} {
-	data := make([]map[string]interface{}, len(metrics))
+	data := make([]map[string]any, len(metrics))
 
 	for i, metric := range metrics {
 		point := map[string]interface{}{
