@@ -30,8 +30,8 @@ const Layout = ({ children }) => {
       <div className="fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-primary-200">
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-center h-16 px-4 border-b border-primary-200">
-            <h1 className="text-xl font-light text-black tracking-wide">Monitaur</h1>
+          <div className="flex items-center justify-center h-28 px-4 border-b border-primary-200 p-2">
+            <img src="/icon.svg" alt="Monitaur Logo" className="h-full" />
           </div>
 
           {/* Navigation */}
