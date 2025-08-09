@@ -123,6 +123,8 @@ const SettingsPage = () => {
 
             {activeTab === 'notifications' && (
               <div className="space-y-6">
+                {/* Add Coming Soon Label for this section */}
+                <p className="text-sm text-gray-500">Coming Soon</p>
                 <h2 className="text-lg font-light text-black tracking-wide">Notification Preferences</h2>
 
                 <div className="space-y-6">
