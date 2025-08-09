@@ -30,7 +30,7 @@ const Dashboard = () => {
 
   if (error) {
     return (
-      <div className="bg-danger-50 border border-danger-200 text-danger-700 px-4 py-3 rounded">
+      <div className="border border-primary-800 bg-primary-900 text-white px-4 py-3">
         Error loading dashboard: {error.response?.data?.error || error.message}
       </div>
     );
@@ -43,29 +43,21 @@ const Dashboard = () => {
       name: 'Total Servers',
       value: summary?.total_servers || 0,
       icon: ComputerDesktopIcon,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50',
     },
     {
       name: 'Online Servers',
       value: summary?.online_servers || 0,
       icon: CheckCircleIcon,
-      color: 'text-green-600',
-      bgColor: 'bg-green-50',
     },
     {
       name: 'Offline Servers',
       value: summary?.offline_servers || 0,
       icon: ClockIcon,
-      color: 'text-gray-600',
-      bgColor: 'bg-gray-50',
     },
     {
       name: 'Warning Servers',
       value: summary?.warning_servers || 0,
       icon: ExclamationTriangleIcon,
-      color: 'text-yellow-600',
-      bgColor: 'bg-yellow-50',
     },
   ];
 
@@ -88,27 +80,26 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Welcome Message */}
-      <div className="bg-gradient-to-r from-primary-600 to-primary-700 rounded-lg p-6 text-white">
-        <h2 className="text-2xl font-bold mb-2">Welcome to Monitaur</h2>
-        <p className="text-primary-100">
-          Monitor your servers in real-time with comprehensive metrics and alerts.
+    <div className="space-y-8 bg-white min-h-screen">
+      {/* Header */}
+      <div className="border-b border-primary-200 pb-6">
+        <h1 className="text-3xl font-light text-black tracking-wide">Monitaur</h1>
+        <p className="text-primary-600 mt-1 font-light">
+          Server monitoring dashboard
         </p>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.name} className="card hover:shadow-md transition-shadow">
-            <div className="flex items-center">
-              <div className={`p-3 rounded-lg ${stat.bgColor}`}>
-                <stat.icon className={`w-6 h-6 ${stat.color}`} />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">{stat.name}</p>
-                <p className="text-2xl font-semibold text-gray-900">{stat.value}</p>
-              </div>
+      <div className="grid grid-cols-4 gap-0 border border-primary-200">
+        {stats.map((stat, index) => (
+          <div
+            key={stat.name}
+            className={`p-6 border-primary-200 ${index < 3 ? 'border-r' : ''}`}
+          >
+            <div className="flex flex-col items-center text-center">
+              <stat.icon className="w-6 h-6 text-black mb-3" />
+              <p className="text-2xl font-light text-black mb-1">{stat.value}</p>
+              <p className="text-xs text-primary-600 uppercase tracking-wide">{stat.name}</p>
             </div>
           </div>
         ))}
@@ -116,102 +107,97 @@ const Dashboard = () => {
 
       {/* System Health Overview */}
       {system_health && summary?.online_servers > 0 && (
-        <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">System Health Overview</h3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-blue-50 rounded-lg">
-                <CpuChipIcon className="w-5 h-5 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-500">Average CPU</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {system_health.average_cpu?.toFixed(1)}%
-                </p>
-              </div>
+        <div className="border border-primary-200 p-6">
+          <h2 className="text-lg font-light text-black mb-6 tracking-wide">System Health</h2>
+          <div className="grid grid-cols-3 gap-0 border border-primary-200">
+            <div className="p-4 border-r border-primary-200 text-center">
+              <CpuChipIcon className="w-5 h-5 text-black mx-auto mb-2" />
+              <p className="text-lg font-light text-black">
+                {system_health.average_cpu?.toFixed(1)}%
+              </p>
+              <p className="text-xs text-primary-600 uppercase tracking-wide">CPU</p>
             </div>
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-green-50 rounded-lg">
-                <CircleStackIcon className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-500">Average Memory</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {system_health.average_memory?.toFixed(1)}%
-                </p>
-              </div>
+            <div className="p-4 border-r border-primary-200 text-center">
+              <CircleStackIcon className="w-5 h-5 text-black mx-auto mb-2" />
+              <p className="text-lg font-light text-black">
+                {system_health.average_memory?.toFixed(1)}%
+              </p>
+              <p className="text-xs text-primary-600 uppercase tracking-wide">Memory</p>
             </div>
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-yellow-50 rounded-lg">
-                <ServerIcon className="w-5 h-5 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-500">Average Disk</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {system_health.average_disk?.toFixed(1)}%
-                </p>
-              </div>
+            <div className="p-4 text-center">
+              <ServerIcon className="w-5 h-5 text-black mx-auto mb-2" />
+              <p className="text-lg font-light text-black">
+                {system_health.average_disk?.toFixed(1)}%
+              </p>
+              <p className="text-xs text-primary-600 uppercase tracking-wide">Disk</p>
             </div>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-2 gap-8">
         {/* Servers List */}
-        <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Servers</h3>
+        <div className="border border-primary-200 p-6">
+          <h2 className="text-lg font-light text-black mb-6 tracking-wide">Servers</h2>
           {servers && servers.length > 0 ? (
-            <div className="space-y-3">
-              {servers.slice(0, 5).map((server) => (
-                <div key={server.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <div className="space-y-0 border border-primary-200">
+              {servers.slice(0, 5).map((server, index) => (
+                <div
+                  key={server.id}
+                  className={`flex items-center justify-between p-4 ${
+                    index < servers.slice(0, 5).length - 1 ? 'border-b border-primary-200' : ''
+                  }`}
+                >
                   <div className="flex items-center">
-                    <div className={`w-3 h-3 rounded-full mr-3 ${
-                      server.status === 'online' ? 'bg-green-500' :
-                      server.status === 'warning' ? 'bg-yellow-500' : 'bg-gray-400'
+                    <div className={`w-2 h-2 rounded-full mr-4 ${
+                      server.status === 'online' ? 'bg-black' :
+                      server.status === 'warning' ? 'bg-primary-500' : 'bg-primary-300'
                     }`} />
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{server.name}</p>
-                      <p className="text-xs text-gray-500 capitalize">{server.status}</p>
+                      <p className="font-light text-black">{server.name}</p>
                     </div>
                   </div>
-                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                    server.status === 'online' ? 'bg-green-100 text-green-800' :
-                    server.status === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
+                  <span className="text-xs text-primary-600 uppercase tracking-wide">
                     {server.status}
                   </span>
                 </div>
               ))}
               {servers.length > 5 && (
-                <p className="text-sm text-gray-500 text-center">
-                  And {servers.length - 5} more servers...
-                </p>
+                <div className="p-4 text-center border-t border-primary-200">
+                  <p className="text-xs text-primary-600">
+                    +{servers.length - 5} more
+                  </p>
+                </div>
               )}
             </div>
           ) : (
-            <div className="text-center py-8">
-              <ComputerDesktopIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">No servers connected yet</p>
-              <button className="mt-2 btn btn-primary">
-                Add Your First Server
+            <div className="text-center py-12">
+              <ComputerDesktopIcon className="w-8 h-8 text-primary-400 mx-auto mb-4" />
+              <p className="text-primary-600 mb-4 font-light">No servers connected</p>
+              <button className="border border-black px-4 py-2 text-black hover:bg-black hover:text-white transition-colors">
+                Add Server
               </button>
             </div>
           )}
         </div>
 
         {/* Recent Alerts */}
-        <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Recent Alerts</h3>
+        <div className="border border-primary-200 p-6">
+          <h2 className="text-lg font-light text-black mb-6 tracking-wide">Recent Alerts</h2>
           {recent_alerts && recent_alerts.length > 0 ? (
-            <div className="space-y-3">
-              {recent_alerts.slice(0, 5).map((alert) => (
-                <div key={alert.id} className="p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div className="space-y-0 border border-primary-200">
+              {recent_alerts.slice(0, 5).map((alert, index) => (
+                <div
+                  key={alert.id}
+                  className={`p-4 ${
+                    index < recent_alerts.slice(0, 5).length - 1 ? 'border-b border-primary-200' : ''
+                  }`}
+                >
                   <div className="flex items-start">
-                    <ExclamationTriangleIcon className="w-5 h-5 text-red-500 mt-0.5 mr-3" />
+                    <ExclamationTriangleIcon className="w-4 h-4 text-black mt-1 mr-3" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-red-900">{alert.message}</p>
-                      <p className="text-xs text-red-600 mt-1">
+                      <p className="font-light text-black text-sm">{alert.message}</p>
+                      <p className="text-xs text-primary-600 mt-2">
                         {alert.server?.name} • {new Date(alert.created_at).toLocaleString()}
                       </p>
                     </div>
@@ -220,28 +206,36 @@ const Dashboard = () => {
               ))}
             </div>
           ) : (
-            <div className="text-center py-8">
-              <CheckCircleIcon className="w-12 h-12 text-green-400 mx-auto mb-4" />
-              <p className="text-gray-500">No recent alerts</p>
-              <p className="text-sm text-gray-400">All systems running smoothly</p>
+            <div className="text-center py-12">
+              <CheckCircleIcon className="w-8 h-8 text-primary-400 mx-auto mb-4" />
+              <p className="text-primary-600 font-light">No alerts</p>
             </div>
           )}
         </div>
       </div>
 
       {/* Quick Actions */}
-      <div className="card">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
-        <div className="flex flex-wrap gap-3">
-          <Link to="/servers" className="btn btn-primary">
+      <div className="border border-primary-200 p-6">
+        <h2 className="text-lg font-light text-black mb-6 tracking-wide">Actions</h2>
+        <div className="flex space-x-4">
+          <Link
+            to="/servers"
+            className="border border-black px-4 py-2 text-black hover:bg-black hover:text-white transition-colors flex items-center"
+          >
             <PlusIcon className="w-4 h-4 mr-2" />
             Add Server
           </Link>
-          <Link to="/alerts" className="btn btn-secondary">
+          <Link
+            to="/alerts"
+            className="border border-primary-300 px-4 py-2 text-primary-600 hover:border-black hover:text-black transition-colors flex items-center"
+          >
             <ExclamationTriangleIcon className="w-4 h-4 mr-2" />
             View Alerts
           </Link>
-          <Link to="/settings" className="btn btn-secondary">
+          <Link
+            to="/settings"
+            className="border border-primary-300 px-4 py-2 text-primary-600 hover:border-black hover:text-black transition-colors flex items-center"
+          >
             <CpuChipIcon className="w-4 h-4 mr-2" />
             Settings
           </Link>

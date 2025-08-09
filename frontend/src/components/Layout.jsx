@@ -25,18 +25,18 @@ const Layout = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-white">
       {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg">
+      <div className="fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-primary-200">
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-center h-16 px-4 bg-primary-600">
-            <h1 className="text-xl font-bold text-white">Monitaur</h1>
+          <div className="flex items-center justify-center h-16 px-4 border-b border-primary-200">
+            <h1 className="text-xl font-light text-black tracking-wide">Monitaur</h1>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-6 space-y-1">
-            {navigation.map((item) => {
+          <nav className="flex-1 px-0 py-0">
+            {navigation.map((item, index) => {
               const isActive = location.pathname === item.href ||
                 (item.href !== '/' && location.pathname.startsWith(item.href));
 
@@ -45,41 +45,43 @@ const Layout = ({ children }) => {
                   key={item.name}
                   to={item.href}
                   className={clsx(
-                    'flex items-center px-3 py-2 text-sm font-medium rounded-lg group transition-colors',
+                    'flex items-center px-6 py-4 text-sm font-light transition-colors border-b border-primary-200',
                     isActive
-                      ? 'bg-primary-50 text-primary-700 border-r-2 border-primary-600'
-                      : 'text-gray-700 hover:bg-gray-100'
+                      ? 'bg-black text-white'
+                      : 'text-black hover:bg-primary-100'
                   )}
                 >
                   <item.icon className={clsx(
-                    'w-5 h-5 mr-3 transition-colors',
+                    'w-4 h-4 mr-4 transition-colors',
                     isActive
-                      ? 'text-primary-600'
-                      : 'text-gray-500 group-hover:text-gray-700'
+                      ? 'text-white'
+                      : 'text-primary-600'
                   )} />
-                  {item.name}
+                  <span className="uppercase tracking-wide text-xs">
+                    {item.name}
+                  </span>
                 </Link>
               );
             })}
           </nav>
 
           {/* User section */}
-          <div className="px-4 py-4 border-t border-gray-200">
-            <div className="flex items-center">
+          <div className="px-6 py-4 border-t border-primary-200">
+            <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">
+                <p className="text-xs font-light text-black truncate uppercase tracking-wide">
                   {user?.email}
                 </p>
-                <p className="text-xs text-gray-500 truncate">
+                <p className="text-xs text-primary-600 truncate mt-1">
                   Account
                 </p>
               </div>
               <button
                 onClick={handleLogout}
-                className="flex-shrink-0 p-1 ml-3 text-gray-400 hover:text-gray-600 transition-colors"
+                className="flex-shrink-0 p-1 text-primary-600 hover:text-black transition-colors"
                 title="Sign out"
               >
-                <ArrowRightOnRectangleIcon className="w-5 h-5" />
+                <ArrowRightOnRectangleIcon className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -90,16 +92,16 @@ const Layout = ({ children }) => {
       <div className="pl-64">
         <div className="flex flex-col min-h-screen">
           {/* Top bar */}
-          <header className="bg-white shadow-sm border-b border-gray-200">
+          <header className="bg-white border-b border-primary-200">
             <div className="px-6 py-4">
-              <h2 className="text-2xl font-semibold text-gray-900">
+              <h2 className="text-lg font-light text-black tracking-wide uppercase text-xs">
                 Server Monitoring
               </h2>
             </div>
           </header>
 
           {/* Page content */}
-          <main className="flex-1 p-6">
+          <main className="flex-1 p-6 bg-white">
             {children}
           </main>
         </div>

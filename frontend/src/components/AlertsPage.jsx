@@ -78,20 +78,6 @@ const AlertsPage = () => {
     await resolveAlertMutation.mutateAsync(alertId);
   };
 
-  const getAlertIcon = (level, resolved) => {
-    if (resolved) return CheckCircleIcon;
-    return level === 'critical' ? XCircleIcon : ExclamationTriangleIcon;
-  };
-
-  const getAlertStyles = (level, resolved) => {
-    if (resolved) {
-      return 'bg-green-50 border-green-200 text-green-800';
-    }
-    return level === 'critical'
-      ? 'bg-red-50 border-red-200 text-red-800'
-      : 'bg-yellow-50 border-yellow-200 text-yellow-800';
-  };
-
   const alertStats = {
     total: alerts.length,
     unresolved: alerts.filter(a => !a.resolved).length,
@@ -108,75 +94,48 @@ const AlertsPage = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 bg-white">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Alerts</h1>
-        <p className="text-gray-600">Monitor and manage system alerts across all servers</p>
+      <div className="border-b border-primary-200 pb-6">
+        <h1 className="text-2xl font-light text-black tracking-wide">Alerts</h1>
+        <p className="text-primary-600 mt-1 font-light text-sm">Monitor system alerts across servers</p>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-4">
-        <div className="card">
-          <div className="flex items-center">
-            <div className="p-3 bg-blue-50 rounded-lg">
-              <ExclamationTriangleIcon className="w-6 h-6 text-blue-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">Total Alerts</p>
-              <p className="text-2xl font-semibold text-gray-900">{alertStats.total}</p>
-            </div>
-          </div>
+      <div className="grid grid-cols-4 gap-0 border border-primary-200">
+        <div className="p-6 border-r border-primary-200 text-center">
+          <ExclamationTriangleIcon className="w-5 h-5 text-black mx-auto mb-3" />
+          <p className="text-xl font-light text-black mb-1">{alertStats.total}</p>
+          <p className="text-xs text-primary-600 uppercase tracking-wide">Total</p>
         </div>
-
-        <div className="card">
-          <div className="flex items-center">
-            <div className="p-3 bg-orange-50 rounded-lg">
-              <ExclamationTriangleIcon className="w-6 h-6 text-orange-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">Unresolved</p>
-              <p className="text-2xl font-semibold text-gray-900">{alertStats.unresolved}</p>
-            </div>
-          </div>
+        <div className="p-6 border-r border-primary-200 text-center">
+          <ExclamationTriangleIcon className="w-5 h-5 text-black mx-auto mb-3" />
+          <p className="text-xl font-light text-black mb-1">{alertStats.unresolved}</p>
+          <p className="text-xs text-primary-600 uppercase tracking-wide">Unresolved</p>
         </div>
-
-        <div className="card">
-          <div className="flex items-center">
-            <div className="p-3 bg-red-50 rounded-lg">
-              <XCircleIcon className="w-6 h-6 text-red-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">Critical</p>
-              <p className="text-2xl font-semibold text-gray-900">{alertStats.critical}</p>
-            </div>
-          </div>
+        <div className="p-6 border-r border-primary-200 text-center">
+          <XCircleIcon className="w-5 h-5 text-black mx-auto mb-3" />
+          <p className="text-xl font-light text-black mb-1">{alertStats.critical}</p>
+          <p className="text-xs text-primary-600 uppercase tracking-wide">Critical</p>
         </div>
-
-        <div className="card">
-          <div className="flex items-center">
-            <div className="p-3 bg-yellow-50 rounded-lg">
-              <ExclamationTriangleIcon className="w-6 h-6 text-yellow-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-500">Warning</p>
-              <p className="text-2xl font-semibold text-gray-900">{alertStats.warning}</p>
-            </div>
-          </div>
+        <div className="p-6 text-center">
+          <ExclamationTriangleIcon className="w-5 h-5 text-black mx-auto mb-3" />
+          <p className="text-xl font-light text-black mb-1">{alertStats.warning}</p>
+          <p className="text-xs text-primary-600 uppercase tracking-wide">Warning</p>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="card">
-        <div className="flex items-center space-x-4">
-          <FunnelIcon className="w-5 h-5 text-gray-500" />
-          <div className="flex items-center space-x-4">
+      <div className="border border-primary-200 p-6">
+        <div className="flex items-center space-x-6">
+          <FunnelIcon className="w-4 h-4 text-primary-600" />
+          <div className="flex items-center space-x-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Server</label>
+              <label className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">Server</label>
               <select
                 value={selectedServer}
                 onChange={(e) => setSelectedServer(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                className="border border-primary-300 px-3 py-2 text-black focus:outline-none focus:border-black text-sm"
               >
                 <option value="all">All Servers</option>
                 {servers.map(server => (
@@ -186,11 +145,11 @@ const AlertsPage = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <label className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">Status</label>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                className="border border-primary-300 px-3 py-2 text-black focus:outline-none focus:border-black text-sm"
               >
                 <option value="all">All Status</option>
                 <option value="unresolved">Unresolved</option>
@@ -199,11 +158,11 @@ const AlertsPage = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Level</label>
+              <label className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">Level</label>
               <select
                 value={levelFilter}
                 onChange={(e) => setLevelFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                className="border border-primary-300 px-3 py-2 text-black focus:outline-none focus:border-black text-sm"
               >
                 <option value="all">All Levels</option>
                 <option value="critical">Critical</option>
@@ -215,81 +174,79 @@ const AlertsPage = () => {
       </div>
 
       {/* Alerts List */}
-      <div className="card">
+      <div className="border border-primary-200 p-6">
         {filteredAlerts.length === 0 ? (
-          <div className="text-center py-12">
-            <CheckCircleIcon className="w-16 h-16 text-green-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {alerts.length === 0 ? 'No alerts found' : 'No alerts match your filters'}
-            </h3>
-            <p className="text-gray-500">
+          <div className="text-center py-16">
+            <CheckCircleIcon className="w-12 h-12 text-primary-400 mx-auto mb-6" />
+            <h2 className="text-lg font-light text-black mb-2 tracking-wide">
+              {alerts.length === 0 ? 'No alerts' : 'No matching alerts'}
+            </h2>
+            <p className="text-primary-600 font-light">
               {alerts.length === 0
-                ? 'All systems are running smoothly!'
-                : 'Try adjusting your filters to see more alerts.'
+                ? 'All systems running smoothly'
+                : 'Try adjusting filters'
               }
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {filteredAlerts.map((alert) => {
-              const AlertIcon = getAlertIcon(alert.level, alert.resolved);
-
-              return (
-                <div
-                  key={alert.id}
-                  className={`p-4 rounded-lg border ${getAlertStyles(alert.level, alert.resolved)}`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start space-x-3">
-                      <AlertIcon className="w-5 h-5 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <span className="font-medium">{alert.server_name}</span>
-                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                            alert.level === 'critical'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-yellow-100 text-yellow-800'
-                          }`}>
-                            {alert.level}
+          <div className="space-y-0 border border-primary-200">
+            {filteredAlerts.map((alert, index) => (
+              <div
+                key={alert.id}
+                className={`p-4 ${
+                  index < filteredAlerts.length - 1 ? 'border-b border-primary-200' : ''
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    {alert.level === 'critical' ? (
+                      <XCircleIcon className="w-4 h-4 text-black mt-1" />
+                    ) : (
+                      <ExclamationTriangleIcon className="w-4 h-4 text-black mt-1" />
+                    )}
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3 mb-2">
+                        <span className="font-light text-black">{alert.server_name}</span>
+                        <span className="text-xs text-primary-600 uppercase tracking-wide">
+                          {alert.level}
+                        </span>
+                        {alert.resolved && (
+                          <span className="text-xs text-primary-600 uppercase tracking-wide">
+                            Resolved
                           </span>
-                          {alert.resolved && (
-                            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800">
-                              Resolved
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm mb-2">{alert.message}</p>
-                        <div className="flex items-center space-x-4 text-xs text-gray-600">
-                          <span>{new Date(alert.created_at).toLocaleString()}</span>
-                          {alert.value && alert.threshold && (
-                            <span>Value: {alert.value.toFixed(1)}% (Threshold: {alert.threshold}%)</span>
-                          )}
-                        </div>
+                        )}
+                      </div>
+                      <p className="text-sm font-light text-black mb-2">{alert.message}</p>
+                      <div className="flex items-center space-x-4 text-xs text-primary-600">
+                        <span>{new Date(alert.created_at).toLocaleString()}</span>
+                        {alert.value && alert.threshold && (
+                          <span>Value: {alert.value.toFixed(1)}% (Threshold: {alert.threshold}%)</span>
+                        )}
                       </div>
                     </div>
+                  </div>
 
-                    <div className="flex items-center space-x-2 ml-4">
-                      <Link
-                        to={`/servers/${alert.server_id}`}
-                        className="p-1 text-gray-500 hover:text-gray-700"
-                        title="View server details"
+                  <div className="flex items-center space-x-3 ml-4">
+                    <Link
+                      to={`/servers/${alert.server_id}`}
+                      className="text-primary-600 hover:text-black transition-colors"
+                      title="View server"
+                    >
+                      <EyeIcon className="w-4 h-4" />
+                    </Link>
+                    {!alert.resolved && (
+                      <button
+                        onClick={() => handleResolveAlert(alert.id)}
+                        disabled={resolveAlertMutation.isLoading}
+                        className="border border-primary-300 px-3 py-1 text-xs text-primary-600 hover:border-black hover:text-black disabled:opacity-50 transition-colors uppercase tracking-wide"
                       >
-                        <EyeIcon className="w-4 h-4" />
-                      </Link>
-                      {!alert.resolved && (
-                        <button
-                          onClick={() => handleResolveAlert(alert.id)}
-                          disabled={resolveAlertMutation.isLoading}
-                          className="px-3 py-1 text-xs font-medium text-green-700 bg-green-100 rounded hover:bg-green-200 disabled:opacity-50"
-                        >
-                          Resolve
-                        </button>
-                      )}
-                    </div>
+                        Resolve
+                      </button>
+                    )}
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
       </div>

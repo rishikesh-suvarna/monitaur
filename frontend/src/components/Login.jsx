@@ -41,31 +41,31 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-white py-12 px-4">
       <div className="max-w-md w-full space-y-8">
-        <div>
-          <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-primary-600">
-            <span className="text-white font-bold text-xl">M</span>
+        <div className="text-center">
+          <div className="mx-auto h-16 w-16 border border-black flex items-center justify-center mb-6">
+            <span className="text-black font-light text-xl tracking-wide">M</span>
           </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            {isLogin ? 'Sign in to your account' : 'Create your account'}
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Monitor your servers with Monitaur
+          <h1 className="text-3xl font-light text-black tracking-wide mb-2">
+            {isLogin ? 'Sign In' : 'Sign Up'}
+          </h1>
+          <p className="text-sm text-primary-600 font-light">
+            Server monitoring with Monitaur
           </p>
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
-            <div className="bg-danger-50 border border-danger-200 text-danger-700 px-4 py-3 rounded">
+            <div className="border border-primary-800 bg-primary-900 text-white px-4 py-3">
               {error}
             </div>
           )}
 
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email address
+              <label htmlFor="email" className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">
+                Email Address
               </label>
               <input
                 id="email"
@@ -75,16 +75,16 @@ const Login = () => {
                 required
                 value={formData.email}
                 onChange={handleInputChange}
-                className="mt-1 appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                placeholder="Enter your email"
+                className="w-full px-3 py-4 border border-primary-300 text-black focus:outline-none focus:border-black"
+                placeholder="Enter email address"
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="password" className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">
                 Password
               </label>
-              <div className="mt-1 relative">
+              <div className="relative">
                 <input
                   id="password"
                   name="password"
@@ -93,8 +93,8 @@ const Login = () => {
                   required
                   value={formData.password}
                   onChange={handleInputChange}
-                  className="appearance-none relative block w-full px-3 py-2 pr-10 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  placeholder="Enter your password"
+                  className="w-full px-3 py-4 pr-12 border border-primary-300 text-black focus:outline-none focus:border-black"
+                  placeholder="Enter password"
                 />
                 <button
                   type="button"
@@ -102,36 +102,36 @@ const Login = () => {
                   onClick={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+                    <EyeSlashIcon className="h-4 w-4 text-primary-600" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400" />
+                    <EyeIcon className="h-4 w-4 text-primary-600" />
                   )}
                 </button>
               </div>
             </div>
           </div>
 
-          <div>
+          <div className="space-y-4">
             <button
               type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={loading || !formData.email.trim() || !formData.password.trim()}
+              className="w-full border border-black px-4 py-4 text-black hover:bg-black hover:text-white focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Processing...' : (isLogin ? 'Sign in' : 'Sign up')}
+              {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}
             </button>
-          </div>
 
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => setIsLogin(!isLogin)}
-              className="text-primary-600 hover:text-primary-500 text-sm"
-            >
-              {isLogin
-                ? "Don't have an account? Sign up"
-                : "Already have an account? Sign in"
-              }
-            </button>
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setIsLogin(!isLogin)}
+                className="text-primary-600 hover:text-black text-sm font-light transition-colors"
+              >
+                {isLogin
+                  ? "Don't have an account? Sign up"
+                  : "Already have an account? Sign in"
+                }
+              </button>
+            </div>
           </div>
         </form>
       </div>
