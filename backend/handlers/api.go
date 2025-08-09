@@ -233,9 +233,16 @@ func (h *APIHandler) GetServerAlerts(c *gin.Context) {
 		return
 	}
 
+	// Get user to get internal ID
+	user, err := h.db.GetUserByUID(userClaims.UID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+		return
+	}
+
 	// Check if server belongs to user
 	var server models.Server
-	err = h.db.DB.Where("id = ? AND user_id = ?", serverID, userClaims.UID).First(&server).Error
+	err = h.db.DB.Where("id = ? AND user_id = ?", serverID, user.ID).First(&server).Error
 	if err == gorm.ErrRecordNotFound {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Server not found"})
 		return
@@ -276,10 +283,17 @@ func (h *APIHandler) ResolveAlert(c *gin.Context) {
 		return
 	}
 
+	// Get user to get internal ID
+	user, err := h.db.GetUserByUID(userClaims.UID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+		return
+	}
+
 	// Check if alert belongs to user's server
 	var alert models.Alert
 	err = h.db.DB.Joins("JOIN servers ON alerts.server_id = servers.id").
-		Where("alerts.id = ? AND servers.user_id = ?", alertID, userClaims.UID).
+		Where("alerts.id = ? AND servers.user_id = ?", alertID, user.ID).
 		First(&alert).Error
 	if err == gorm.ErrRecordNotFound {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Alert not found"})
