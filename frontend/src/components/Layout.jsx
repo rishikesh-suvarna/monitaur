@@ -91,15 +91,6 @@ const Layout = ({ children }) => {
       {/* Main content */}
       <div className="pl-64">
         <div className="flex flex-col min-h-screen">
-          {/* Top bar */}
-          <header className="bg-white border-b border-primary-200">
-            <div className="px-6 py-4">
-              <h2 className="font-light text-black tracking-wide uppercase text-xs">
-                Welcome To Monitaur
-              </h2>
-            </div>
-          </header>
-
           {/* Page content */}
           <main className="flex-1 p-6 bg-white">
             {children}
