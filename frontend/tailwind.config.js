@@ -56,9 +56,12 @@ export default {
           900: '#000000',
         },
       },
-    },
+      fontFamily: {
+        manrope: ['Manrope', 'sans-serif'],
+      },
   },
   plugins: [
     require('@tailwindcss/forms'),
   ],
+}
 }
