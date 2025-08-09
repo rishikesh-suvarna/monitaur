@@ -44,8 +44,8 @@ const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-white py-12 px-4">
       <div className="max-w-md w-full space-y-8">
         <div className="text-center">
-          <div className="mx-auto h-16 w-16 border border-black flex items-center justify-center mb-6">
-            <span className="text-black font-light text-xl tracking-wide">M</span>
+          <div className="mx-auto h-36 w-36 flex items-center justify-center mb-6">
+            <img src="/logo.png" alt="Monitaur Logo" className="h-36 w-36" />
           </div>
           <h1 className="text-3xl font-light text-black tracking-wide mb-2">
             {isLogin ? 'Sign In' : 'Sign Up'}
