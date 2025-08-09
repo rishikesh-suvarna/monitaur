@@ -82,33 +82,6 @@ jobs:
           # Store backup path for potential rollback
           echo $BACKUP_DIR > /tmp/latest-frontend-backup
 
-    - name: Debug - List build archive before SCP
-      run: |
-        echo "Listing frontend-build.tar.gz before SCP:"
-        ls -l ./frontend/frontend-build.tar.gz
-
-    - name: Copy build to server
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: ${{ secrets.PORT }}
-        source: "./frontend/frontend-build.tar.gz"
-        target: "/tmp/"
-        debug: true
-
-    - name: Debug - List build archive on server after SCP
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: ${{ secrets.PORT }}
-        script: |
-          echo "Listing /tmp/frontend/frontend-build.tar.gz on server:"
-          ls -l /tmp/frontend/frontend-build.tar.gz
-
     - name: Deploy frontend
       uses: appleboy/ssh-action@v1.0.3
       with:
