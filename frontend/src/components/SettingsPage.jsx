@@ -99,18 +99,6 @@ const SettingsPage = () => {
 
                   <div>
                     <label className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">
-                      User ID
-                    </label>
-                    <input
-                      type="text"
-                      value={profile?.id || 'N/A'}
-                      disabled
-                      className="w-full px-3 py-3 border border-primary-200 bg-primary-50 text-primary-600"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-primary-600 mb-2 uppercase tracking-wide">
                       Account Created
                     </label>
                     <input
