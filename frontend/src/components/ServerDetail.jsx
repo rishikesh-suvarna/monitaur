@@ -25,7 +25,7 @@ import LoadingSpinner from './LoadingSpinner';
 
 const ServerDetail = () => {
   const { id } = useParams();
-  const [timeRange, setTimeRange] = useState(24);
+  const [timeRange, setTimeRange] = useState(1);
   const [selectedMetric, setSelectedMetric] = useState('cpu');
 
   const { data: serverData, isLoading: serverLoading } = useQuery({
@@ -85,11 +85,28 @@ const ServerDetail = () => {
   const chartMetrics = chartData?.data?.data || [];
 
   const formatChartData = (data) => {
-    return data.map(item => ({
-      time: new Date(item.timestamp).toLocaleTimeString(),
-      value: selectedMetric === 'network' ? item.bytes_in / 1024 / 1024 : item.value,
-      bytes_out: selectedMetric === 'network' ? item.bytes_out / 1024 / 1024 : undefined,
-    }));
+    if (!data || data.length === 0) return [];
+
+    // Sort data by timestamp to ensure proper chronological order
+    const sortedData = [...data].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    return sortedData.map(item => {
+      const date = new Date(item.timestamp);
+      return {
+        time: date.toLocaleTimeString('en-US', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit'
+        }),
+        fullTime: date.toLocaleString(),
+        value: selectedMetric === 'network' ?
+          (item.bytes_in ? item.bytes_in / 1024 / 1024 : 0) :
+          (item.value || 0),
+        bytes_out: selectedMetric === 'network' ?
+          (item.bytes_out ? item.bytes_out / 1024 / 1024 : 0) :
+          undefined,
+      };
+    });
   };
 
   const formatBytes = (bytes) => {
@@ -233,22 +250,54 @@ const ServerDetail = () => {
         </div>
 
         {chartLoading ? (
-          <div className="h-64 flex items-center justify-center">
+          <div className="h-64 flex items-center justify-center border border-primary-200">
             <LoadingSpinner />
           </div>
         ) : chartMetrics.length > 0 ? (
-          <div className="h-64 border border-primary-200 p-4">
+          <div className="h-80 bg-white border border-primary-200">
             <ResponsiveContainer width="100%" height="100%">
               {selectedMetric === 'network' ? (
-                <AreaChart data={formatChartData(chartMetrics)}>
-                  <CartesianGrid strokeDasharray="1 1" stroke="#e8eaed" />
-                  <XAxis dataKey="time" fontSize={10} />
-                  <YAxis label={{ value: 'MB/s', angle: -90, position: 'insideLeft' }} fontSize={10} />
+                <AreaChart
+                  data={formatChartData(chartMetrics)}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="1 1"
+                    stroke="#dadce0"
+                    strokeWidth={0.5}
+                  />
+                  <XAxis
+                    dataKey="time"
+                    fontSize={11}
+                    stroke="#5f6368"
+                    tickLine={false}
+                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+                  />
+                  <YAxis
+                    label={{
+                      value: 'MB/s',
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { textAnchor: 'middle', fontSize: '11px', fill: '#5f6368' }
+                    }}
+                    fontSize={11}
+                    stroke="#5f6368"
+                    tickLine={false}
+                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+                  />
                   <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #dadce0',
+                      borderRadius: '0',
+                      fontSize: '12px',
+                      padding: '8px'
+                    }}
                     formatter={(value, name) => [
-                      `${value.toFixed(2)} MB/s`,
+                      `${Number(value).toFixed(2)} MB/s`,
                       name === 'value' ? 'Inbound' : 'Outbound'
                     ]}
+                    labelFormatter={(label) => `Time: ${label}`}
                   />
                   <Area
                     type="monotone"
@@ -256,41 +305,80 @@ const ServerDetail = () => {
                     stackId="1"
                     stroke="#000000"
                     fill="#000000"
-                    fillOpacity={0.3}
+                    fillOpacity={0.1}
+                    strokeWidth={2}
                   />
-                  <Area
-                    type="monotone"
-                    dataKey="bytes_out"
-                    stackId="2"
-                    stroke="#9aa0a6"
-                    fill="#9aa0a6"
-                    fillOpacity={0.3}
-                  />
+                  {formatChartData(chartMetrics)[0]?.bytes_out !== undefined && (
+                    <Area
+                      type="monotone"
+                      dataKey="bytes_out"
+                      stackId="2"
+                      stroke="#9aa0a6"
+                      fill="#9aa0a6"
+                      fillOpacity={0.1}
+                      strokeWidth={2}
+                    />
+                  )}
                 </AreaChart>
               ) : (
-                <LineChart data={formatChartData(chartMetrics)}>
-                  <CartesianGrid strokeDasharray="1 1" stroke="#e8eaed" />
-                  <XAxis dataKey="time" fontSize={10} />
+                <LineChart
+                  data={formatChartData(chartMetrics)}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="1 1"
+                    stroke="#dadce0"
+                    strokeWidth={0.5}
+                  />
+                  <XAxis
+                    dataKey="time"
+                    fontSize={11}
+                    stroke="#5f6368"
+                    tickLine={false}
+                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+                  />
                   <YAxis
                     domain={[0, 100]}
-                    label={{ value: '%', angle: -90, position: 'insideLeft' }}
-                    fontSize={10}
+                    label={{
+                      value: '%',
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { textAnchor: 'middle', fontSize: '11px', fill: '#5f6368' }
+                    }}
+                    fontSize={11}
+                    stroke="#5f6368"
+                    tickLine={false}
+                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
                   />
-                  <Tooltip formatter={(value) => [`${value.toFixed(1)}%`, selectedMetric.toUpperCase()]} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'white',
+                      border: '1px solid #dadce0',
+                      borderRadius: '0',
+                      fontSize: '12px',
+                      padding: '8px'
+                    }}
+                    formatter={(value) => [`${Number(value).toFixed(1)}%`, selectedMetric.toUpperCase()]}
+                    labelFormatter={(label) => `Time: ${label}`}
+                  />
                   <Line
                     type="monotone"
                     dataKey="value"
                     stroke="#000000"
-                    strokeWidth={1}
+                    strokeWidth={2}
                     dot={false}
+                    activeDot={{ r: 4, fill: '#000000', stroke: 'white', strokeWidth: 2 }}
                   />
                 </LineChart>
               )}
             </ResponsiveContainer>
           </div>
         ) : (
-          <div className="h-64 flex items-center justify-center text-primary-600 border border-primary-200">
-            No metrics data available
+          <div className="h-64 flex items-center justify-center text-primary-600 border border-primary-200 bg-primary-50">
+            <div className="text-center">
+              <div className="text-xs uppercase tracking-wide mb-2">No Data Available</div>
+              <div className="text-xs">No metrics data for the selected time range</div>
+            </div>
           </div>
         )}
       </div>
