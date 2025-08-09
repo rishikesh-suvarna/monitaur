@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'frontend/**'
+      - '.github/workflows/frontend-deploy.yml'
   workflow_dispatch:
 
 jobs:
@@ -111,6 +112,11 @@ jobs:
           # Extract new build
           cd /var/www/monitaur
           sudo tar -xzf /tmp/frontend-build.tar.gz
+
+          # Set proper ownership and permissions
+          sudo chown -R www-data:www-data /var/www/monitaur
+          sudo find /var/www/monitaur -type d -exec chmod 755 {} \;
+          sudo find /var/www/monitaur -type f -exec chmod 644 {} \;
 
           echo "Frontend files deployed successfully"
 
