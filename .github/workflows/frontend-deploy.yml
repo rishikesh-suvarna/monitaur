@@ -96,6 +96,7 @@ jobs:
         port: ${{ secrets.PORT }}
         source: "./frontend/frontend-build.tar.gz"
         target: "/tmp/"
+        debug: true
 
     - name: Debug - List build archive on server after SCP
       uses: appleboy/ssh-action@v1.0.3
