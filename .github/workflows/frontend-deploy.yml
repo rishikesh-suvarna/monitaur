@@ -106,8 +106,8 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
         script: |
-          echo "Listing /tmp/frontend-build.tar.gz on server:"
-          ls -l /tmp/frontend-build.tar.gz
+          echo "Listing /tmp/frontend/frontend-build.tar.gz on server:"
+          ls -l /tmp/frontend/frontend-build.tar.gz
 
     - name: Deploy frontend
       uses: appleboy/ssh-action@v1.0.3
@@ -127,7 +127,7 @@ jobs:
 
           # Extract new build
           cd /var/www/monitaur
-          sudo tar -xzf /tmp/frontend-build.tar.gz
+          sudo tar -xzf /tmp/frontend/frontend-build.tar.gz
 
           # Set proper ownership and permissions
           sudo chown -R www-data:www-data /var/www/monitaur
