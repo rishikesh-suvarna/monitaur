@@ -94,8 +94,8 @@ const Layout = ({ children }) => {
           {/* Top bar */}
           <header className="bg-white border-b border-primary-200">
             <div className="px-6 py-4">
-              <h2 className="text-lg font-light text-black tracking-wide uppercase text-xs">
-                Server Monitoring
+              <h2 className="font-light text-black tracking-wide uppercase text-xs">
+                Welcome To Monitaur
               </h2>
             </div>
           </header>

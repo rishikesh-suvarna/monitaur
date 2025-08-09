@@ -106,7 +106,7 @@ const Dashboard = () => {
       </div>
 
       {/* System Health Overview */}
-      {system_health && summary?.online_servers > 0 && (
+      {system_health && (
         <div className="border border-primary-200 p-6">
           <h2 className="text-lg font-light text-black mb-6 tracking-wide">System Health</h2>
           <div className="grid grid-cols-3 gap-0 border border-primary-200">
@@ -149,16 +149,13 @@ const Dashboard = () => {
                   }`}
                 >
                   <div className="flex items-center">
-                    <div className={`w-2 h-2 rounded-full mr-4 ${
-                      server.status === 'online' ? 'bg-black' :
-                      server.status === 'warning' ? 'bg-primary-500' : 'bg-primary-300'
-                    }`} />
                     <div>
                       <p className="font-light text-black">{server.name}</p>
                     </div>
                   </div>
-                  <span className="text-xs text-primary-600 uppercase tracking-wide">
-                    {server.status}
+                  <span className={`text-xs font-bold uppercase tracking-wide w-2 h-2 rounded-full ${
+                    server.status === 'online' ? 'bg-emerald-500' : `bg-red-500`
+                  }`}>
                   </span>
                 </div>
               ))}
@@ -194,7 +191,7 @@ const Dashboard = () => {
                   }`}
                 >
                   <div className="flex items-start">
-                    <ExclamationTriangleIcon className="w-4 h-4 text-black mt-1 mr-3" />
+                    <ExclamationTriangleIcon className="w-5 h-5 text-yellow-500 mt-1 mr-3" />
                     <div className="flex-1">
                       <p className="font-light text-black text-sm">{alert.message}</p>
                       <p className="text-xs text-primary-600 mt-2">
