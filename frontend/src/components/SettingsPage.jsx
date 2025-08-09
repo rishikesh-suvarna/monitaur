@@ -1,9 +1,8 @@
 import {
   BellIcon,
   CodeBracketIcon,
-  DocumentTextIcon,
   ShieldCheckIcon,
-  UserCircleIcon,
+  UserCircleIcon
 } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -25,7 +24,7 @@ const SettingsPage = () => {
     { id: 'notifications', name: 'Notifications', icon: BellIcon },
     { id: 'security', name: 'Security', icon: ShieldCheckIcon },
     { id: 'api', name: 'API Access', icon: CodeBracketIcon },
-    { id: 'about', name: 'About', icon: DocumentTextIcon },
+    // { id: 'about', name: 'About', icon: DocumentTextIcon },
   ];
 
   const handleLogout = async () => {
@@ -146,7 +145,7 @@ const SettingsPage = () => {
                     </div>
                     <input
                       type="checkbox"
-                      defaultChecked
+                      disabled
                       className="w-4 h-4 border border-primary-300 focus:ring-0 focus:ring-offset-0"
                     />
                   </div>
@@ -158,6 +157,7 @@ const SettingsPage = () => {
                     </div>
                     <input
                       type="checkbox"
+                      disabled
                       className="w-4 h-4 border border-primary-300 focus:ring-0 focus:ring-offset-0"
                     />
                   </div>
@@ -169,7 +169,7 @@ const SettingsPage = () => {
                     </div>
                     <input
                       type="checkbox"
-                      defaultChecked
+                      disabled
                       className="w-4 h-4 border border-primary-300 focus:ring-0 focus:ring-offset-0"
                     />
                   </div>
@@ -200,21 +200,6 @@ const SettingsPage = () => {
                       <p className="text-xs text-primary-600">
                         Password changes managed through Firebase. Use "Forgot Password" on login.
                       </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-light text-black mb-3">Active Sessions</h3>
-                    <div className="border border-primary-200 p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-light text-black">Current Session</p>
-                          <p className="text-xs text-primary-600">Started {new Date().toLocaleString()}</p>
-                        </div>
-                        <span className="text-xs text-primary-600 uppercase tracking-wide">
-                          Active
-                        </span>
-                      </div>
                     </div>
                   </div>
                 </div>
