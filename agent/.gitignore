@@ -22,7 +22,6 @@ vendor/
 # Go workspace file
 go.work
 go.work.sum
-go.sum
 
 # Go build artifacts
 bin/
