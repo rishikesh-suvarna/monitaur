@@ -10,6 +10,7 @@ type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Firebase FirebaseConfig `mapstructure:"firebase"`
+	SMTP     SMTPConfig     `mapstructure:"smtp"`
 }
 
 type ServerConfig struct {
@@ -32,6 +33,14 @@ type FirebaseConfig struct {
 	ProjectID          string `mapstructure:"project_id"`
 }
 
+type SMTPConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     string `mapstructure:"port"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+	From     string `mapstructure:"from"`
+}
+
 func LoadConfig() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
@@ -47,6 +56,9 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("database.user", "postgres")
 	viper.SetDefault("database.dbname", "monitaur")
 	viper.SetDefault("database.sslmode", "disable")
+	viper.SetDefault("smtp.host", "email-smtp.ap-south-1.amazonaws.com")
+	viper.SetDefault("smtp.port", "587")
+	viper.SetDefault("smtp.from", "rowan@ideamagix.in")
 
 	// Allow environment variables
 	viper.AutomaticEnv()
@@ -82,6 +94,12 @@ func CreateSampleConfig() error {
 
 	viper.Set("firebase.service_account_path", "./firebase-service-account.json")
 	viper.Set("firebase.project_id", "your-firebase-project-id")
+
+	viper.Set("smtp.host", "your_smtp_host_here")
+	viper.Set("smtp.port", "your_smtp_port_here")
+	viper.Set("smtp.username", "your_smtp_username_here")
+	viper.Set("smtp.password", "your_smtp_password_here")
+	viper.Set("smtp.from", "your_smtp_from_here")
 
 	return viper.WriteConfigAs("config.yaml")
 }

@@ -116,6 +116,12 @@ func (d *Database) CreateUser(user *models.User) error {
 	return d.DB.Create(user).Error
 }
 
+func (db *Database) GetUserByID(userID uint) (*models.User, error) {
+	var user models.User
+	err := db.DB.First(&user, userID).Error
+	return &user, err
+}
+
 func (d *Database) GetUserByUID(uid string) (*models.User, error) {
 	var user models.User
 	err := d.DB.Where("firebase_uid = ?", uid).First(&user).Error
@@ -151,6 +157,12 @@ func (d *Database) GetOrCreateUser(uid, email string) (*models.User, error) {
 // Server operations
 func (d *Database) CreateServer(server *models.Server) error {
 	return d.DB.Create(server).Error
+}
+
+func (db *Database) GetServerByID(serverID uint) (*models.Server, error) {
+	var server models.Server
+	err := db.DB.First(&server, serverID).Error
+	return &server, err
 }
 
 func (d *Database) GetServerByToken(token string) (*models.Server, error) {

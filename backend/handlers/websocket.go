@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/smtp"
+	"strings"
 	"sync"
 	"time"
 
+	"backend/config"
 	"backend/database"
 	"backend/models"
 
@@ -19,7 +24,6 @@ import (
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		// Allow connections from any origin in development
-		// In production, you should check the origin properly
 		return true
 	},
 }
@@ -33,13 +37,15 @@ type AgentConnection struct {
 
 type WebSocketHandler struct {
 	db          *database.Database
+	config      *config.Config
 	connections map[uint]*AgentConnection // serverID -> connection
 	mutex       sync.RWMutex
 }
 
-func NewWebSocketHandler(db *database.Database) *WebSocketHandler {
+func NewWebSocketHandler(db *database.Database, cfg *config.Config) *WebSocketHandler {
 	handler := &WebSocketHandler{
 		db:          db,
+		config:      cfg,
 		connections: make(map[uint]*AgentConnection),
 	}
 
@@ -283,8 +289,268 @@ func (h *WebSocketHandler) handleAlertMessage(agentConn *AgentConnection, messag
 
 	log.Printf("Received alert from %s: %s", agentConn.server.Name, alertDataStruct.Message)
 
-	// TODO: Trigger email notifications here
-	// h.sendEmailAlert(agentConn.server, alert)
+	// Send email alert
+	go h.sendEmailAlert(agentConn.server, alert)
+}
+
+// sendEmailAlert sends an email notification for alerts
+func (h *WebSocketHandler) sendEmailAlert(server *models.Server, alert *models.Alert) {
+	// Get SMTP configuration from config
+	smtpConfig := h.config.SMTP
+
+	// Validate required SMTP configuration
+	if smtpConfig.Username == "" || smtpConfig.Password == "" {
+		log.Printf("SMTP configuration incomplete: missing username or password")
+		return
+	}
+
+	// Get recipients
+	recipients := h.getAlertRecipients(server.ID)
+	if len(recipients) == 0 {
+		log.Printf("No recipients found for server %s alerts", server.Name)
+		return
+	}
+
+	// Create email content
+	subject := fmt.Sprintf("[ALERT] %s - %s Alert on Server %s",
+		strings.ToUpper(alert.Level), strings.ToUpper(alert.Type), server.Name)
+
+	body := h.buildEmailBody(server, alert)
+
+	// Send email to each recipient
+	for _, recipient := range recipients {
+		if err := h.sendEmail(smtpConfig, recipient, subject, body); err != nil {
+			log.Printf("Failed to send alert email to %s: %v", recipient, err)
+		} else {
+			log.Printf("Alert email sent to %s for server %s", recipient, server.Name)
+		}
+	}
+}
+
+// sendEmail sends an email using SMTP
+func (h *WebSocketHandler) sendEmail(smtpConfig config.SMTPConfig, to, subject, body string) error {
+	// Set up authentication
+	auth := smtp.PlainAuth("", smtpConfig.Username, smtpConfig.Password, smtpConfig.Host)
+
+	// Create message
+	msg := []byte("To: " + to + "\r\n" +
+		"From: " + smtpConfig.From + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/html; charset=\"UTF-8\"\r\n" +
+		"\r\n" +
+		body + "\r\n")
+
+	// Connect to server
+	serverAddr := smtpConfig.Host + ":" + smtpConfig.Port
+
+	// Connect with plain TCP first
+	conn, err := net.Dial("tcp", serverAddr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SMTP server: %v", err)
+	}
+	defer conn.Close()
+
+	// Create SMTP client
+	client, err := smtp.NewClient(conn, smtpConfig.Host)
+	if err != nil {
+		return fmt.Errorf("failed to create SMTP client: %v", err)
+	}
+	defer client.Quit()
+
+	// Start TLS if supported
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: false,
+			ServerName:         smtpConfig.Host,
+		}
+		if err = client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("failed to start TLS: %v", err)
+		}
+	}
+
+	// Authenticate
+	if err = client.Auth(auth); err != nil {
+		return fmt.Errorf("SMTP authentication failed: %v", err)
+	}
+
+	// Set sender
+	if err = client.Mail(smtpConfig.From); err != nil {
+		return fmt.Errorf("failed to set sender: %v", err)
+	}
+
+	// Set recipient
+	if err = client.Rcpt(to); err != nil {
+		return fmt.Errorf("failed to set recipient: %v", err)
+	}
+
+	// Send message
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("failed to initiate data transfer: %v", err)
+	}
+	defer w.Close()
+
+	_, err = w.Write(msg)
+	if err != nil {
+		return fmt.Errorf("failed to write message: %v", err)
+	}
+
+	return nil
+}
+
+// buildEmailBody creates the HTML email body for alerts
+func (h *WebSocketHandler) buildEmailBody(server *models.Server, alert *models.Alert) string {
+	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
+
+	// Determine alert color based on level
+	alertColor := "#fbbf24" // warning yellow
+	switch strings.ToLower(alert.Level) {
+	case "critical":
+		alertColor = "#ef4444" // red
+	case "error":
+		alertColor = "#ef4444" // red
+	case "warning":
+		alertColor = "#fbbf24" // yellow
+	case "info":
+		alertColor = "#3b82f6" // blue
+	}
+
+	return fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Server Alert | Monitaur</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background-color: %s; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+        <h1 style="margin: 0; font-size: 24px;">Server Alert</h1>
+        <p style="margin: 5px 0 0 0; font-size: 18px; font-weight: bold;">%s</p>
+    </div>
+
+    <div style="background-color: #f8f9fa; padding: 20px; border: 1px solid #dee2e6; border-top: none; border-radius: 0 0 8px 8px;">
+        <h2 style="color: #495057; margin-top: 0;">Alert Details</h2>
+
+        <table style="width: 100%%; border-collapse: collapse; margin: 15px 0;">
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Server:</td>
+                <td style="padding: 8px 0;">%s</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Alert Type:</td>
+                <td style="padding: 8px 0;">%s</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Level:</td>
+                <td style="padding: 8px 0; color: %s; font-weight: bold;">%s</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Message:</td>
+                <td style="padding: 8px 0;">%s</td>
+            </tr>
+            %s
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Time:</td>
+                <td style="padding: 8px 0;">%s</td>
+            </tr>
+        </table>
+
+        <div style="margin-top: 20px; padding: 15px; background-color: #fff; border-left: 4px solid %s; border-radius: 4px;">
+            <p style="margin: 0; color: #6c757d;">
+                <strong>Action Required:</strong> Please check your Monitaur dashboard for more details and take appropriate action to resolve this alert.
+            </p>
+        </div>
+
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #dee2e6;">
+
+        <p style="font-size: 12px; color: #6c757d; margin: 0;">
+            This alert was automatically generated by Monitaur.
+        </p>
+    </div>
+</body>
+</html>`,
+		alertColor,
+		strings.ToUpper(alert.Level),
+		strings.ToUpper(server.Name),
+		strings.ToUpper(alert.Type),
+		alertColor,
+		strings.ToUpper(alert.Level),
+		alert.Message,
+		h.buildValueThresholdRow(alert),
+		timestamp,
+		alertColor,
+	)
+}
+
+// buildValueThresholdRow creates table rows for value and threshold if they exist
+func (h *WebSocketHandler) buildValueThresholdRow(alert *models.Alert) string {
+	var rows strings.Builder
+
+	// Check if Value is not zero (assuming 0 means not set)
+	if alert.Value != 0 {
+		rows.WriteString(fmt.Sprintf(`
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Current Value:</td>
+                <td style="padding: 8px 0;">%.2f</td>
+            </tr>`, alert.Value))
+	}
+
+	// Check if Threshold is not zero (assuming 0 means not set)
+	if alert.Threshold != 0 {
+		rows.WriteString(fmt.Sprintf(`
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; color: #6c757d;">Threshold:</td>
+                <td style="padding: 8px 0;">%.2f</td>
+            </tr>`, alert.Threshold))
+	}
+
+	return rows.String()
+}
+
+// getAlertRecipients returns email addresses that should receive alerts for a server
+func (h *WebSocketHandler) getAlertRecipients(serverID uint) []string {
+	// Get the server to find the owner (user_id)
+	server, err := h.db.GetServerByID(serverID)
+	if err != nil {
+		log.Printf("Error fetching server %d: %v", serverID, err)
+		return []string{}
+	}
+
+	// Get the user who owns this server
+	user, err := h.db.GetUserByID(server.UserID)
+	if err != nil {
+		log.Printf("Error fetching user %d for server %d: %v", server.UserID, serverID, err)
+		return []string{}
+	}
+
+	// Return the owner's email
+	recipients := []string{user.Email}
+
+	// Optional:
+
+	// 1. Admin users who should receive all alerts
+	// adminUsers, err := h.db.GetAdminUsers()
+	// if err == nil {
+	//     for _, admin := range adminUsers {
+	//         if admin.Email != user.Email { // Avoid duplicates
+	//             recipients = append(recipients, admin.Email)
+	//         }
+	//     }
+	// }
+
+	// 2. Users who have subscribed to this specific server's alerts
+	// subscribers, err := h.db.GetServerSubscribers(serverID)
+	// if err == nil {
+	//     for _, subscriber := range subscribers {
+	//         if subscriber.Email != user.Email { // Avoid duplicates
+	//             recipients = append(recipients, subscriber.Email)
+	//         }
+	//     }
+	// }
+
+	log.Printf("Alert recipients for server %s (ID: %d): %v", server.Name, serverID, recipients)
+	return recipients
 }
 
 // unregisterConnection removes a connection from the registry

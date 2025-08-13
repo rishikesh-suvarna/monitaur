@@ -58,7 +58,7 @@ func main() {
 	}
 
 	// Initialize handlers
-	wsHandler := handlers.NewWebSocketHandler(db)
+	wsHandler := handlers.NewWebSocketHandler(db, cfg)
 	apiHandler := handlers.NewAPIHandler(db, firebaseAuth, wsHandler)
 	dashboardHandler := handlers.NewDashboardHandler(db, wsHandler)
 
@@ -106,10 +106,6 @@ func main() {
 		api.GET("/servers/:id/dashboard", dashboardHandler.GetServerDashboard)
 		api.GET("/servers/:id/chart", dashboardHandler.GetMetricsChart)
 	}
-
-	// Serve static files for frontend (optional)
-	router.Static("/static", "./static")
-	router.StaticFile("/", "./static/index.html")
 
 	// Start server
 	serverAddr := cfg.Server.Host + ":" + cfg.Server.Port
