@@ -59,6 +59,17 @@ jobs:
         tar -czf frontend-build.tar.gz -C dist .
         ls -la frontend-build.tar.gz
 
+    - name: Copy build to server
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        source: "./frontend/frontend-build.tar.gz"
+        target: "/tmp/frontend/"
+        strip_components: 1
+
     - name: Backup current frontend
       uses: appleboy/ssh-action@v1.0.3
       with:
