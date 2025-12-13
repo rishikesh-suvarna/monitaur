@@ -68,8 +68,10 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
         source: "./frontend/frontend-build.tar.gz"
-        target: "/tmp/frontend/"
+        target: "/tmp/"
         strip_components: 1
+        overwrite: true
+        rm: false
 
     - name: Backup current frontend
       uses: appleboy/ssh-action@v1.0.3
