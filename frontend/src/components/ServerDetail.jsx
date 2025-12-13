@@ -226,164 +226,215 @@ const ServerDetail = () => {
       )}
 
       {/* Chart Section */}
-      <div className="border border-primary-200 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-light text-black tracking-wide">Performance</h2>
-          <div className="flex space-x-0 border border-primary-200">
-            {metricOptions.map((option, index) => (
-              <button
-                key={option.value}
-                onClick={() => setSelectedMetric(option.value)}
-                className={`flex items-center px-4 py-2 text-xs uppercase tracking-wide transition-colors border-primary-200 ${
-                  index < metricOptions.length - 1 ? 'border-r' : ''
-                } ${
-                  selectedMetric === option.value
-                    ? 'bg-black text-white'
-                    : 'text-primary-600 hover:bg-primary-100'
-                }`}
-              >
-                <option.icon className="w-3 h-3 mr-2" />
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {chartLoading ? (
-          <div className="h-64 flex items-center justify-center border border-primary-200">
-            <LoadingSpinner />
-          </div>
-        ) : chartMetrics.length > 0 ? (
-          <div className="h-80 bg-white border border-primary-200">
-            <ResponsiveContainer width="100%" height="100%">
-              {selectedMetric === 'network' ? (
-                <AreaChart
-                  data={formatChartData(chartMetrics)}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="1 1"
-                    stroke="#dadce0"
-                    strokeWidth={0.5}
-                  />
-                  <XAxis
-                    dataKey="time"
-                    fontSize={11}
-                    stroke="#5f6368"
-                    tickLine={false}
-                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
-                  />
-                  <YAxis
-                    label={{
-                      value: 'MB/s',
-                      angle: -90,
-                      position: 'insideLeft',
-                      style: { textAnchor: 'middle', fontSize: '11px', fill: '#5f6368' }
-                    }}
-                    fontSize={11}
-                    stroke="#5f6368"
-                    tickLine={false}
-                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'white',
-                      border: '1px solid #dadce0',
-                      borderRadius: '0',
-                      fontSize: '12px',
-                      padding: '8px'
-                    }}
-                    formatter={(value, name) => [
-                      `${Number(value).toFixed(2)} MB/s`,
-                      name === 'value' ? 'Inbound' : 'Outbound'
-                    ]}
-                    labelFormatter={(label) => `Time: ${label}`}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="value"
-                    stackId="1"
-                    stroke="#000000"
-                    fill="#000000"
-                    fillOpacity={0.1}
-                    strokeWidth={2}
-                  />
-                  {formatChartData(chartMetrics)[0]?.bytes_out !== undefined && (
-                    <Area
-                      type="monotone"
-                      dataKey="bytes_out"
-                      stackId="2"
-                      stroke="#9aa0a6"
-                      fill="#9aa0a6"
-                      fillOpacity={0.1}
-                      strokeWidth={2}
-                    />
-                  )}
-                </AreaChart>
-              ) : (
-                <LineChart
-                  data={formatChartData(chartMetrics)}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="1 1"
-                    stroke="#dadce0"
-                    strokeWidth={0.5}
-                  />
-                  <XAxis
-                    dataKey="time"
-                    fontSize={11}
-                    stroke="#5f6368"
-                    tickLine={false}
-                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    label={{
-                      value: '%',
-                      angle: -90,
-                      position: 'insideLeft',
-                      style: { textAnchor: 'middle', fontSize: '11px', fill: '#5f6368' }
-                    }}
-                    fontSize={11}
-                    stroke="#5f6368"
-                    tickLine={false}
-                    axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'white',
-                      border: '1px solid #dadce0',
-                      borderRadius: '0',
-                      fontSize: '12px',
-                      padding: '8px'
-                    }}
-                    formatter={(value) => [`${Number(value).toFixed(1)}%`, selectedMetric.toUpperCase()]}
-                    labelFormatter={(label) => `Time: ${label}`}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    stroke="#000000"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4, fill: '#000000', stroke: 'white', strokeWidth: 2 }}
-                  />
-                </LineChart>
-              )}
-            </ResponsiveContainer>
-          </div>
-        ) : (
-          <div className="h-64 flex items-center justify-center text-primary-600 border border-primary-200 bg-primary-50">
-            <div className="text-center">
-              <div className="text-xs uppercase tracking-wide mb-2">No Data Available</div>
-              <div className="text-xs">No metrics data for the selected time range</div>
+        <div className="border border-primary-200 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-light text-black tracking-wide">Performance</h2>
+            <div className="flex space-x-0 border border-primary-200">
+          {metricOptions.map((option, index) => (
+            <button
+              key={option.value}
+              onClick={() => setSelectedMetric(option.value)}
+              className={`flex items-center px-4 py-2 text-xs uppercase tracking-wide transition-colors border-primary-200 ${
+            index < metricOptions.length - 1 ? 'border-r' : ''
+              } ${
+            selectedMetric === option.value
+              ? 'bg-black text-white'
+              : 'text-primary-600 hover:bg-primary-100'
+              }`}
+            >
+              <option.icon className="w-3 h-3 mr-2" />
+              {option.label}
+            </button>
+          ))}
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Recent Alerts */}
+          {chartLoading ? (
+            <div className="h-64 flex items-center justify-center border border-primary-200">
+          <LoadingSpinner />
+            </div>
+          ) : chartMetrics.length > 0 ? (
+            <div className="h-80 bg-white border border-primary-200">
+          <ResponsiveContainer width="100%" height="100%">
+            {selectedMetric === 'network' ? (() => {
+              // Calculate per-second rates and best unit
+              const formatted = formatChartData(chartMetrics);
+              // Calculate per-second deltas
+              let rates = [];
+              for (let i = 1; i < formatted.length; i++) {
+            const prev = chartMetrics[i - 1];
+            const curr = chartMetrics[i];
+            const prevTime = new Date(prev.timestamp).getTime();
+            const currTime = new Date(curr.timestamp).getTime();
+            const seconds = (prevTime - currTime) / 1000;
+            if (seconds <= 0) continue;
+            rates.push({
+              in: (prev.bytes_in - curr.bytes_in) / seconds,
+              out: (prev.bytes_out - curr.bytes_out) / seconds,
+            });
+              }
+              // Find max rate to determine unit
+              const maxRate = Math.max(
+            ...rates.map(r => Math.max(r.in, r.out))
+              );
+              const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
+              let unitIndex = 0;
+              let displayMax = maxRate;
+              while (displayMax >= 1024 && unitIndex < units.length - 1) {
+            displayMax /= 1024;
+            unitIndex++;
+              }
+              const displayUnit = units[unitIndex];
+
+              // Prepare chart data with rates in chosen unit
+              const chartDataWithRates = [];
+              for (let i = 1; i < formatted.length; i++) {
+            const prev = chartMetrics[i - 1];
+            const curr = chartMetrics[i];
+            const prevTime = new Date(prev.timestamp).getTime();
+            const currTime = new Date(curr.timestamp).getTime();
+            const seconds = (prevTime - currTime) / 1000;
+            if (seconds <= 0) continue;
+            chartDataWithRates.push({
+              time: new Date(curr.timestamp).toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit'
+              }),
+              value: ((prev.bytes_in - curr.bytes_in) / seconds) / Math.pow(1024, unitIndex),
+              bytes_out: ((prev.bytes_out - curr.bytes_out) / seconds) / Math.pow(1024, unitIndex),
+            });
+              }
+
+              return (
+            <AreaChart
+              data={chartDataWithRates}
+              margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+            >
+              <CartesianGrid
+                strokeDasharray="1 1"
+                stroke="#dadce0"
+                strokeWidth={0.5}
+              />
+              <XAxis
+                dataKey="time"
+                fontSize={11}
+                stroke="#5f6368"
+                tickLine={false}
+                axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+              />
+              <YAxis
+                label={{
+              value: displayUnit,
+              angle: -90,
+              position: 'insideLeft',
+              style: { textAnchor: 'middle', fontSize: '11px', fill: '#5f6368' }
+                }}
+                fontSize={11}
+                stroke="#5f6368"
+                tickLine={false}
+                axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+              />
+              <Tooltip
+                contentStyle={{
+              backgroundColor: 'white',
+              border: '1px solid #dadce0',
+              borderRadius: '0',
+              fontSize: '12px',
+              padding: '8px'
+                }}
+                formatter={(value, name) => [
+              `${Number(value).toFixed(2)} ${displayUnit}`,
+              name === 'value' ? 'Inbound' : 'Outbound'
+                ]}
+                labelFormatter={(label) => `Time: ${label}`}
+              />
+              <Area
+                type="monotone"
+                dataKey="value"
+                stackId="1"
+                stroke="#000000"
+                fill="#000000"
+                fillOpacity={0.1}
+                strokeWidth={2}
+              />
+              {chartDataWithRates[0]?.bytes_out !== undefined && (
+                <Area
+              type="monotone"
+              dataKey="bytes_out"
+              stackId="2"
+              stroke="#9aa0a6"
+              fill="#9aa0a6"
+              fillOpacity={0.1}
+              strokeWidth={2}
+                />
+              )}
+            </AreaChart>
+              );
+            })() : (
+              <LineChart
+            data={formatChartData(chartMetrics)}
+            margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+              >
+            <CartesianGrid
+              strokeDasharray="1 1"
+              stroke="#dadce0"
+              strokeWidth={0.5}
+            />
+            <XAxis
+              dataKey="time"
+              fontSize={11}
+              stroke="#5f6368"
+              tickLine={false}
+              axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+            />
+            <YAxis
+              domain={[0, 100]}
+              label={{
+                value: '%',
+                angle: -90,
+                position: 'insideLeft',
+                style: { textAnchor: 'middle', fontSize: '11px', fill: '#5f6368' }
+              }}
+              fontSize={11}
+              stroke="#5f6368"
+              tickLine={false}
+              axisLine={{ stroke: '#dadce0', strokeWidth: 1 }}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'white',
+                border: '1px solid #dadce0',
+                borderRadius: '0',
+                fontSize: '12px',
+                padding: '8px'
+              }}
+              formatter={(value) => [`${Number(value).toFixed(1)}%`, selectedMetric.toUpperCase()]}
+              labelFormatter={(label) => `Time: ${label}`}
+            />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke="#000000"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: '#000000', stroke: 'white', strokeWidth: 2 }}
+            />
+              </LineChart>
+            )}
+          </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-64 flex items-center justify-center text-primary-600 border border-primary-200 bg-primary-50">
+          <div className="text-center">
+            <div className="text-xs uppercase tracking-wide mb-2">No Data Available</div>
+            <div className="text-xs">No metrics data for the selected time range</div>
+          </div>
+            </div>
+          )}
+        </div>
+
+        {/* Recent Alerts */}
       <div className="border border-primary-200 p-6">
         <h2 className="text-lg font-light text-black mb-6 tracking-wide">Recent Alerts</h2>
         {alerts.length > 0 ? (
