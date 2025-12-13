@@ -19,13 +19,13 @@ Phase 2:
 
 ## Features
 
-- 🔄 **Real-time monitoring** - CPU, Memory, Disk, Network metrics
-- 📊 **Interactive dashboard** - Beautiful charts and statistics
-- 🚨 **Smart alerts** - Configurable thresholds with notifications
-- 🔗 **WebSocket streaming** - Low-latency data transmission
-- 🖥️ **Multi-platform** - Linux, macOS, Windows support
-- 🔧 **Easy deployment** - Single binary, systemd service
-- 🔐 **Secure** - Firebase authentication, encrypted connections
+- **Real-time monitoring** - CPU, Memory, Disk, Network metrics
+- **Interactive dashboard** - Beautiful charts and statistics
+- **Smart alerts** - Configurable thresholds with notifications
+- **WebSocket streaming** - Low-latency data transmission
+- **Multi-platform** - Linux, macOS, Windows support
+- **Easy deployment** - Single binary, systemd service
+- **Secure** - Firebase authentication, encrypted connections
 
 ## Quick Start
 
