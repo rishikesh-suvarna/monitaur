@@ -114,7 +114,7 @@ jobs:
 
           # Extract new build
           cd /var/www/monitaur
-          sudo tar -xzf /tmp/frontend/frontend-build.tar.gz
+          sudo tar -xzf /tmp/frontend-build.tar.gz
 
           # Set proper ownership and permissions
           sudo chown -R www-data:www-data /var/www/monitaur
