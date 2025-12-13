@@ -27,7 +27,7 @@ jobs:
       run: |
         echo "Building backend for Linux AMD64..."
         go mod download
-        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o monitaur-backend .
+        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o monitaur-backend .
 
         # Verify binary was created
         ls -la monitaur-backend
