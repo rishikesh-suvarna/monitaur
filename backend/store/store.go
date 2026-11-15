@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -89,10 +88,3 @@ func (r Role) AtLeast(min Role) bool { return roleRank[r] >= roleRank[min] }
 
 // unlimited reports whether a plan limit of n means "no limit".
 func unlimited(n int) bool { return n <= 0 }
-
-func timePtr(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
-}
