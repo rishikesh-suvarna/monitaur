@@ -16,8 +16,13 @@ export const REQUIRED_KEYS = [
   'VITE_FIREBASE_APP_ID',
 ] as const;
 
-// Not needed for Firebase Auth, so a missing value is not fatal.
-export const OPTIONAL_KEYS = ['VITE_FIREBASE_STORAGE_BUCKET', 'VITE_FIREBASE_MESSAGING_SENDER_ID'] as const;
+// Not needed for Firebase Auth, so a missing value is not fatal. The App Check
+// site key turns on Firebase App Check (reCAPTCHA Enterprise) when set.
+export const OPTIONAL_KEYS = [
+  'VITE_FIREBASE_STORAGE_BUCKET',
+  'VITE_FIREBASE_MESSAGING_SENDER_ID',
+  'VITE_FIREBASE_APPCHECK_SITE_KEY',
+] as const;
 
 type EnvKey = (typeof REQUIRED_KEYS)[number] | (typeof OPTIONAL_KEYS)[number];
 export type EnvSource = Partial<Record<EnvKey, string | undefined>>;
@@ -41,6 +46,8 @@ export interface AppEnv {
   /** Full agent endpoint written into the agent config. */
   agentEndpoint: string;
   firebase: FirebaseEnv;
+  /** reCAPTCHA Enterprise site key for Firebase App Check; absent means App Check is off. */
+  appCheckSiteKey?: string;
 }
 
 export class EnvError extends Error {
@@ -83,6 +90,7 @@ export function parseEnv(source: EnvSource): AppEnv {
   const optional = (key: EnvKey): string | undefined => (read(key) === '' ? undefined : read(key));
   const storageBucket = optional('VITE_FIREBASE_STORAGE_BUCKET');
   const messagingSenderId = optional('VITE_FIREBASE_MESSAGING_SENDER_ID');
+  const appCheckSiteKey = optional('VITE_FIREBASE_APPCHECK_SITE_KEY');
 
   return {
     serverUrl,
@@ -97,6 +105,7 @@ export function parseEnv(source: EnvSource): AppEnv {
       ...(storageBucket ? { storageBucket } : {}),
       ...(messagingSenderId ? { messagingSenderId } : {}),
     },
+    ...(appCheckSiteKey ? { appCheckSiteKey } : {}),
   };
 }
 

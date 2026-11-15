@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createApiClient, ORG_HEADER, type ApiClientOptions } from './client';
+import { APP_CHECK_HEADER, createApiClient, ORG_HEADER, type ApiClientOptions } from './client';
 import { ApiError, codeFromStatus, errorFromResponse, isApiError } from './errors';
 
 const BASE_URL = 'https://api.example.test/api/v1';
@@ -178,5 +178,28 @@ describe('401 handling', () => {
     await expect(harness.client.request('/public/status/x', { auth: false })).rejects.toMatchObject({ status: 401 });
     expect(harness.fetch).toHaveBeenCalledTimes(1);
     expect(harness.onUnauthorized).not.toHaveBeenCalled();
+  });
+});
+
+describe('Firebase App Check header', () => {
+  it('is absent when no App Check provider is configured', async () => {
+    const harness = setup([() => json(200, {})]);
+    await harness.client.request('/me');
+    expect(headerOf(harness, 0, APP_CHECK_HEADER)).toBeNull();
+  });
+
+  it('is sent on authenticated and public requests when a provider is configured', async () => {
+    const harness = setup([() => json(200, {}), () => json(200, {})], { getAppCheckToken: () => Promise.resolve('ac-token') });
+    await harness.client.request('/me');
+    await harness.client.request('/public/status/acme', { auth: false });
+    expect(headerOf(harness, 0, APP_CHECK_HEADER)).toBe('ac-token');
+    expect(headerOf(harness, 1, APP_CHECK_HEADER)).toBe('ac-token');
+  });
+
+  it('still sends the request without the header when the provider fails', async () => {
+    const harness = setup([() => json(200, { ok: true })], { getAppCheckToken: () => Promise.reject(new Error('recaptcha blocked')) });
+    await expect(harness.client.request('/me')).resolves.toEqual({ ok: true });
+    expect(headerOf(harness, 0, APP_CHECK_HEADER)).toBeNull();
+    expect(headerOf(harness, 0, 'Authorization')).toBe('Bearer cached-token');
   });
 });

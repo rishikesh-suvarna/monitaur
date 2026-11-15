@@ -1,6 +1,7 @@
 import { ApiError, defaultMessage, errorFromResponse, isApiError } from './errors';
 
 export const ORG_HEADER = 'X-Monitaur-Org';
+export const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
 export const DEFAULT_TIMEOUT_MS = 10_000;
 
 const HTTP_UNAUTHORIZED = 401;
@@ -20,6 +21,12 @@ export interface ApiClientOptions {
   getToken: (forceRefresh: boolean) => Promise<string | null>;
   /** Called once a request is still 401 after a forced token refresh. */
   onUnauthorized: () => void;
+  /**
+   * Optional Firebase App Check token provider. When set, every request sends
+   * X-Firebase-AppCheck; a provider failure sends the request without it so
+   * the backend decides (it rejects only when App Check is required).
+   */
+  getAppCheckToken?: () => Promise<string | null>;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }
@@ -98,6 +105,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return refreshing;
   };
 
+  async function appCheckToken(): Promise<string | null> {
+    if (!options.getAppCheckToken) return null;
+    try {
+      return await options.getAppCheckToken();
+    } catch {
+      return null;
+    }
+  }
+
   const unauthorized = (method: string, path: string, cause?: unknown): ApiError =>
     new ApiError({ status: HTTP_UNAUTHORIZED, code: 'unauthorized', message: defaultMessage('unauthorized'), method, path, cause });
 
@@ -121,6 +137,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     if (opts.body !== undefined) headers.set('Content-Type', 'application/json');
     if (opts.auth ?? true) headers.set('Authorization', `Bearer ${await tokenOrThrow(forceRefresh, method, path)}`);
     if (opts.orgId !== undefined && opts.orgId !== null) headers.set(ORG_HEADER, String(opts.orgId));
+    const appCheck = await appCheckToken();
+    if (appCheck) headers.set(APP_CHECK_HEADER, appCheck);
 
     const deadline = withDeadline(opts.signal, opts.timeoutMs === undefined ? clientTimeout : opts.timeoutMs);
     try {

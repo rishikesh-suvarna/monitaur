@@ -25,6 +25,7 @@ Set these in `.env.development.local` (gitignored) or the build environment. The
 | `VITE_APP_SERVER_WS_URL` | yes | Agent WebSocket origin, `ws(s)://`. Written into the agent config as `${VITE_APP_SERVER_WS_URL}/agent/connect`. |
 | `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID` | yes | Firebase web config. |
 | `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID` | no | Not used by Auth. |
+| `VITE_FIREBASE_APPCHECK_SITE_KEY` | no | reCAPTCHA Enterprise site key. When set, Firebase App Check starts with the app and every API request sends `X-Firebase-AppCheck` (pair with the backend's `require_app_check`). |
 
 ## Layout
 

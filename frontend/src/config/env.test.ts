@@ -32,6 +32,12 @@ describe('parseEnv', () => {
     }
   });
 
+  it('turns App Check on only when its site key is set', () => {
+    expect(parseEnv(COMPLETE)).not.toHaveProperty('appCheckSiteKey');
+    expect(parseEnv({ ...COMPLETE, VITE_FIREBASE_APPCHECK_SITE_KEY: '  ' })).not.toHaveProperty('appCheckSiteKey');
+    expect(parseEnv({ ...COMPLETE, VITE_FIREBASE_APPCHECK_SITE_KEY: '6Lc-site-key' }).appCheckSiteKey).toBe('6Lc-site-key');
+  });
+
   it('rejects a WebSocket URL with the wrong scheme', () => {
     expect(() => parseEnv({ ...COMPLETE, VITE_APP_SERVER_WS_URL: 'https://api.example.test' })).toThrow(/invalid VITE_APP_SERVER_WS_URL/);
   });
