@@ -1,6 +1,6 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getToken, initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
-import { getAuth, type Auth } from 'firebase/auth';
+import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
 
 import { getEnv } from './env';
 
@@ -29,6 +29,9 @@ function getFirebaseApp(): FirebaseApp {
 export function getFirebaseAuth(): Auth {
   if (auth) return auth;
   auth = getAuth(getFirebaseApp());
+  // Local end-to-end runs only: a production build never talks to an emulator.
+  const emulator = getEnv().authEmulatorHost;
+  if (import.meta.env.DEV && emulator) connectAuthEmulator(auth, `http://${emulator}`, { disableWarnings: true });
   return auth;
 }
 

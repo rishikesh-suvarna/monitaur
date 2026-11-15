@@ -22,6 +22,7 @@ export const OPTIONAL_KEYS = [
   'VITE_FIREBASE_STORAGE_BUCKET',
   'VITE_FIREBASE_MESSAGING_SENDER_ID',
   'VITE_FIREBASE_APPCHECK_SITE_KEY',
+  'VITE_FIREBASE_AUTH_EMULATOR_HOST',
 ] as const;
 
 type EnvKey = (typeof REQUIRED_KEYS)[number] | (typeof OPTIONAL_KEYS)[number];
@@ -48,6 +49,8 @@ export interface AppEnv {
   firebase: FirebaseEnv;
   /** reCAPTCHA Enterprise site key for Firebase App Check; absent means App Check is off. */
   appCheckSiteKey?: string;
+  /** host:port of the Firebase Auth emulator; honoured in dev builds only. */
+  authEmulatorHost?: string;
 }
 
 export class EnvError extends Error {
@@ -91,6 +94,7 @@ export function parseEnv(source: EnvSource): AppEnv {
   const storageBucket = optional('VITE_FIREBASE_STORAGE_BUCKET');
   const messagingSenderId = optional('VITE_FIREBASE_MESSAGING_SENDER_ID');
   const appCheckSiteKey = optional('VITE_FIREBASE_APPCHECK_SITE_KEY');
+  const authEmulatorHost = optional('VITE_FIREBASE_AUTH_EMULATOR_HOST');
 
   return {
     serverUrl,
@@ -106,6 +110,7 @@ export function parseEnv(source: EnvSource): AppEnv {
       ...(messagingSenderId ? { messagingSenderId } : {}),
     },
     ...(appCheckSiteKey ? { appCheckSiteKey } : {}),
+    ...(authEmulatorHost ? { authEmulatorHost } : {}),
   };
 }
 

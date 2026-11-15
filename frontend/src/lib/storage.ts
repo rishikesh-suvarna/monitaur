@@ -16,6 +16,8 @@ export const STORAGE_KEYS = {
 export const SESSION_KEYS = {
   signOutReason: 'monitaur:signout-reason',
   onboardingDismissed: 'monitaur:onboarding-dismissed',
+  // Where to go after sign-in; survives Google's full-page redirect flow.
+  returnTo: 'monitaur:return-to',
 } as const;
 
 type StorageKind = 'local' | 'session';

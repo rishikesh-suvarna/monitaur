@@ -188,12 +188,19 @@ describe('Firebase App Check header', () => {
     expect(headerOf(harness, 0, APP_CHECK_HEADER)).toBeNull();
   });
 
-  it('is sent on authenticated and public requests when a provider is configured', async () => {
-    const harness = setup([() => json(200, {}), () => json(200, {})], { getAppCheckToken: () => Promise.resolve('ac-token') });
+  it('is sent on authenticated requests only when a provider is configured', async () => {
+    let calls = 0;
+    const harness = setup([() => json(200, {}), () => json(200, {})], {
+      getAppCheckToken: () => {
+        calls++;
+        return Promise.resolve('ac-token');
+      },
+    });
     await harness.client.request('/me');
     await harness.client.request('/public/status/acme', { auth: false });
     expect(headerOf(harness, 0, APP_CHECK_HEADER)).toBe('ac-token');
-    expect(headerOf(harness, 1, APP_CHECK_HEADER)).toBe('ac-token');
+    expect(headerOf(harness, 1, APP_CHECK_HEADER)).toBeNull();
+    expect(calls).toBe(1);
   });
 
   it('still sends the request without the header when the provider fails', async () => {

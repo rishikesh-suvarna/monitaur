@@ -25,7 +25,8 @@ Set these in `.env.development.local` (gitignored) or the build environment. The
 | `VITE_APP_SERVER_WS_URL` | yes | Agent WebSocket origin, `ws(s)://`. Written into the agent config as `${VITE_APP_SERVER_WS_URL}/agent/connect`. |
 | `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID` | yes | Firebase web config. |
 | `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID` | no | Not used by Auth. |
-| `VITE_FIREBASE_APPCHECK_SITE_KEY` | no | reCAPTCHA Enterprise site key. When set, Firebase App Check starts with the app and every API request sends `X-Firebase-AppCheck` (pair with the backend's `require_app_check`). |
+| `VITE_FIREBASE_APPCHECK_SITE_KEY` | no | reCAPTCHA Enterprise site key. When set, Firebase App Check starts with the app and every signed-in API request sends `X-Firebase-AppCheck` (pair with the backend's `require_app_check`). |
+| `VITE_FIREBASE_AUTH_EMULATOR_HOST` | no | `host:port` of the Firebase Auth emulator for local end-to-end runs. Ignored in production builds. |
 
 ## Layout
 
@@ -41,7 +42,7 @@ src/
   components/            design system; components/layout/ is the app shell
   lib/                   formatters, status mapping, fleet logic, sparkline geometry, storage
   routes/                router, RequireAuth gate, route error boundary
-  pages/                 auth, onboarding, overview, rules, channels, settings, status (public), 404, invite, placeholders/
+  pages/                 one folder per screen (see Screens), plus 404 and invite acceptance
 ```
 
 Page folders keep their pure logic in a `*Model.ts` beside the components (`rules/ruleModel.ts`, `channels/channelModel.ts`, `settings/settingsModel.ts`, `status/statusModel.ts`), unit tested next to it.
@@ -58,6 +59,19 @@ Import shared pieces from the barrels: `src/components/index.ts`, `src/hooks/ind
 - Role-restricted actions stay visible but disabled (`useOrg().can('member')`) with a `title` explaining why.
 - Motion respects `prefers-reduced-motion` and the user override (`useMotion()`); JS animations check `useReducedMotion()`.
 
-## Screens still to build
+## Screens
 
-`pages/placeholders/` holds stand-ins for server detail, server settings and alerts. Replace each with the full screen from its artboard; the hooks and components they need already exist.
+| Route | Page module | Artboards |
+|---|---|---|
+| `/sign-in` | `pages/auth/` | SignIn, SignInMobile |
+| `/onboarding` | `pages/onboarding/` | Onboarding, OnboardingMobile |
+| `/` | `pages/overview/` | Main, OverviewLight, OverviewMobile, States |
+| `/servers/:id` | `pages/server-detail/` | ServerDetail, ServerDetailLight, ServerDetailMobile |
+| `/servers/:id/settings` | `pages/server-settings/` | ServerSettings, ServerSettingsMobile |
+| `/alerts` | `pages/alerts/` | Alerts, AlertsMobile |
+| `/rules` | `pages/rules/` | Rules, RulesMobile |
+| `/channels` | `pages/channels/` | Channels, ChannelsMobile |
+| `/settings` | `pages/settings/` | Settings, SettingsMobile (plus organization, plan and status page sections) |
+| `/status/:slug` | `pages/status/` | StatusPage (public, no shell) |
+| `/invite/:token` | `pages/InviteAcceptPage.tsx` | |
+

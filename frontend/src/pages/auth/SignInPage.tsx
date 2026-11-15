@@ -6,7 +6,7 @@ import { Button } from '../../components/Button';
 import { FullScreenLoader } from '../../components/Loader';
 import { Input } from '../../components/Input';
 import { StatusIcon } from '../../components/StatusBadge';
-import { SESSION_KEYS, isString, readStored, removeStored } from '../../lib/storage';
+import { SESSION_KEYS, isString, readStored, removeStored, writeStored } from '../../lib/storage';
 import { MIN_PASSWORD_LENGTH, useAuth } from '../../providers/AuthProvider';
 
 import { AuthAlert, AuthHeading, AuthLayout } from './AuthLayout';
@@ -54,10 +54,17 @@ export default function SignInPage() {
     removeStored(SESSION_KEYS.signOutReason, 'session');
   }, []);
 
+  const from = (location.state as FromState | null)?.from;
+  const fromPath = from?.pathname ? `${from.pathname}${from.search ?? ''}` : null;
+
   if (initializing) return <FullScreenLoader />;
   if (user) {
-    const from = (location.state as FromState | null)?.from;
-    return <Navigate to={from?.pathname ? `${from.pathname}${from.search ?? ''}` : '/'} replace />;
+    // Router state is lost across a full-page redirect, so fall back to the
+    // path stashed before sign-in started. Only same-origin paths are used.
+    const stashed = readStored<string | null>(SESSION_KEYS.returnTo, null, isString, 'session');
+    removeStored(SESSION_KEYS.returnTo, 'session');
+    const safeStashed = stashed?.startsWith('/') && !stashed.startsWith('//') ? stashed : null;
+    return <Navigate to={fromPath ?? safeStashed ?? '/'} replace />;
   }
 
   const copy = COPY[mode];
@@ -117,6 +124,7 @@ export default function SignInPage() {
             loading={pending === 'google'}
             disabled={pending !== null}
             onClick={() => {
+              if (fromPath) writeStored(SESSION_KEYS.returnTo, fromPath, 'session');
               void run('google', signInWithGoogle);
             }}
           >

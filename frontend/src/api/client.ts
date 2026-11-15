@@ -135,10 +135,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     const method = opts.method ?? 'GET';
     const headers = new Headers({ Accept: opts.accept ?? 'application/json' });
     if (opts.body !== undefined) headers.set('Content-Type', 'application/json');
-    if (opts.auth ?? true) headers.set('Authorization', `Bearer ${await tokenOrThrow(forceRefresh, method, path)}`);
+    if (opts.auth ?? true) {
+      headers.set('Authorization', `Bearer ${await tokenOrThrow(forceRefresh, method, path)}`);
+      // The backend only checks App Check on signed-in routes, so public
+      // pages (the status page) never load reCAPTCHA for it.
+      const appCheck = await appCheckToken();
+      if (appCheck) headers.set(APP_CHECK_HEADER, appCheck);
+    }
     if (opts.orgId !== undefined && opts.orgId !== null) headers.set(ORG_HEADER, String(opts.orgId));
-    const appCheck = await appCheckToken();
-    if (appCheck) headers.set(APP_CHECK_HEADER, appCheck);
 
     const deadline = withDeadline(opts.signal, opts.timeoutMs === undefined ? clientTimeout : opts.timeoutMs);
     try {
