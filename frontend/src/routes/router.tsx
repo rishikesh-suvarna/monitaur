@@ -14,7 +14,7 @@ const InviteAcceptPage = lazy(() => import('../pages/InviteAcceptPage'));
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 const ServerDetailPage = lazy(() => import('../pages/server-detail/ServerDetailPage'));
 const ServerSettingsPage = lazy(() => import('../pages/server-settings/ServerSettingsPage'));
-const AlertsPage = lazy(() => import('../pages/placeholders/AlertsPage'));
+const AlertsPage = lazy(() => import('../pages/alerts/AlertsPage'));
 const RulesPage = lazy(() => import('../pages/placeholders/RulesPage'));
 const ChannelsPage = lazy(() => import('../pages/placeholders/ChannelsPage'));
 const SettingsPage = lazy(() => import('../pages/placeholders/SettingsPage'));

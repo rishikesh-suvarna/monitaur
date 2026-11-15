@@ -53,7 +53,23 @@ function applyServersEvent(queryClient: QueryClient, orgId: number, payload: Ser
   }
 }
 
-function applyIncidentEvent(queryClient: QueryClient, orgId: number, payload: IncidentStreamEvent): void {
+/** `{action:'refresh'}`: rule or server changes resolved incidents in bulk (docs/platform-v2.md section 4). */
+interface IncidentRefreshEvent {
+  action: 'refresh';
+}
+
+type IncidentEventPayload = IncidentStreamEvent | IncidentRefreshEvent;
+
+const isRefresh = (payload: IncidentEventPayload): payload is IncidentRefreshEvent => payload.action === 'refresh';
+
+function applyIncidentEvent(queryClient: QueryClient, orgId: number, event: IncidentEventPayload): void {
+  if (isRefresh(event)) {
+    // Too many changes to patch: refetch the incident lists and the servers list (open counts).
+    void queryClient.invalidateQueries({ queryKey: queryKeys.incidentsAll(orgId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.serversList(orgId) });
+    return;
+  }
+  const payload = event;
   const previous = findCachedIncident(queryClient, orgId, payload.incident.id);
   writeIncidentToCaches(queryClient, orgId, payload.incident);
   const listKey = queryKeys.serversList(orgId);
@@ -101,7 +117,7 @@ export function useLiveStream(orgId: number, enabled = true): LiveStreamStatus {
           applyServersEvent(queryClient, orgId, JSON.parse(message.data) as ServersStreamEvent);
           setStatus((current) => ({ ...current, lastServersAt: Date.now() }));
         } else if (message.event === 'incident') {
-          applyIncidentEvent(queryClient, orgId, JSON.parse(message.data) as IncidentStreamEvent);
+          applyIncidentEvent(queryClient, orgId, JSON.parse(message.data) as IncidentEventPayload);
         }
       } catch (error) {
         // One malformed event must not kill the stream.
