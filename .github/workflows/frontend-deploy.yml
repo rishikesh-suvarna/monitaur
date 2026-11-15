@@ -61,6 +61,8 @@ jobs:
         VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
         VITE_APP_SERVER_URL: ${{ vars.VITE_APP_SERVER_URL }}
         VITE_APP_SERVER_WS_URL: ${{ vars.VITE_APP_SERVER_WS_URL }}
+        # Optional: enables Firebase App Check in the dashboard when set.
+        VITE_FIREBASE_APPCHECK_SITE_KEY: ${{ secrets.VITE_FIREBASE_APPCHECK_SITE_KEY }}
       run: |
         yarn build
         ls -la dist/
