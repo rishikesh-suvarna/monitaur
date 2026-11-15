@@ -203,7 +203,8 @@ func (s *Store) ListIncidents(ctx context.Context, orgID int64, f IncidentFilter
 
 	incidents, err := collectIncidents(s.pool.Query(ctx,
 		`SELECT `+incidentColumns+incidentFrom+`WHERE `+strings.Join(where, " AND ")+
-			fmt.Sprintf(` ORDER BY (i.resolved_at IS NULL) DESC, i.id DESC LIMIT %d`, limit), args...))
+			// Newest first by id alone, so the `before` cursor pages without gaps.
+			fmt.Sprintf(` ORDER BY i.id DESC LIMIT %d`, limit), args...))
 	if err != nil {
 		return nil, IncidentCounts{}, err
 	}

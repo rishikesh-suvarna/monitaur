@@ -397,7 +397,7 @@ Auth: `Authorization: Bearer <Firebase ID token>`. Password accounts need `email
 | GET | /servers/:id | viewer | | `{server:ServerSummary, token:{prefix,created_at,last_used_at}, counts:{incidents,rules,metrics_days}}` |
 | PATCH | /servers/:id | member | `{name?, tags?}` | `{server}` |
 | DELETE | /servers/:id | admin | | 204 |
-| POST | /servers/:id/token/rotate | admin | | `{token, previous_valid_until}` |
+| POST | /servers/:id/token/rotate | admin | | `{token, previous_valid_until, prefix, install:{command, config_path, config}}` |
 | PUT / DELETE | /servers/:id/pin | viewer | | 204 |
 | GET | /servers/:id/series | viewer | `?range=live\|1h\|6h\|24h\|7d\|30d` | `metrics.Series` + `thresholds:{cpu:{warning,critical},...}` |
 | GET | /incidents | viewer | `?state=open\|acked\|resolved\|all&severity=&metric=&server_id=&limit=50&before=<id>` | `{incidents:[Incident], counts:{open,acked,resolved_24h}}` |
