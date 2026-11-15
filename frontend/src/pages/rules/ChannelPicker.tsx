@@ -12,7 +12,8 @@ export interface ChannelPickerProps {
   disabled?: boolean;
 }
 
-const CHIP_32 = 'inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-sm border border-line bg-surface-2 px-[7px] text-[12px] font-medium leading-none text-ink-muted';
+// Padding stays out of the shared chip so each chip sets its own (clsx keeps both competing classes).
+const CHIP_32 = 'inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-sm border border-line bg-surface-2 text-[12px] font-medium leading-none text-ink-muted';
 const MENU_ITEM = 'flex h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-[13px] text-ink-muted no-underline data-[focus]:bg-surface-3 data-[focus]:text-ink';
 
 /** ", notify [Slack · #ops] [Email] [+ Channel]" from Rules.dc.html. */
@@ -31,7 +32,7 @@ export function ChannelPicker({ channels, value, onChange, disabled = false }: C
         return (
           <span
             key={channel.id}
-            className={cn(CHIP_32, !channel.enabled && 'border-dashed text-ink-faint')}
+            className={cn(CHIP_32, 'px-[7px]', !channel.enabled && 'border-dashed text-ink-faint')}
             title={channel.enabled ? undefined : `${label} is disabled, so this rule skips it`}
           >
             {label}

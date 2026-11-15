@@ -91,7 +91,7 @@ export function ChannelCard({ channel, canManage, canTest, onEdit }: ChannelCard
   const noteTone = rateLimited ? 'text-ink-muted' : 'text-warn';
   const testLabel = sending ? 'Sending…' : flash === 'sent' ? 'Sent' : flash === 'failed' ? 'Failed' : 'Send test';
   const last = outcome?.ok ? 'delivered just now' : deliveryText(channel, now);
-  const buttonSize = desktop ? 'sm' : 'md';
+  const buttonSize = desktop ? 'sm' : 'touch';
 
   return (
     <article aria-labelledby={headingId} className={cn(cardClasses, 'flex flex-col gap-3.5 p-[18px]', failing && 'border-warn')}>
@@ -188,7 +188,7 @@ export function ConnectCard({ type, canManage, onConnect }: ConnectCardProps) {
       <div className="num min-h-9 rounded border border-line bg-bg px-3 py-2.5 text-[12px] leading-[18px] text-ink-muted opacity-60">Not connected</div>
       <p className="m-0 text-[12px] leading-4 text-ink-muted">{CHANNEL_PITCH[type]}</p>
       <div className="mt-auto flex flex-wrap items-center gap-2">
-        <Button variant="primary" size={desktop ? 'sm' : 'md'} onClick={onConnect} disabled={!canManage} title={canManage ? undefined : ADMIN_ONLY}>
+        <Button variant="primary" size={desktop ? 'sm' : 'touch'} onClick={onConnect} disabled={!canManage} title={canManage ? undefined : ADMIN_ONLY}>
           Connect {label}
         </Button>
       </div>

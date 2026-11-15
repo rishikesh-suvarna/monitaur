@@ -1,9 +1,10 @@
 import { cn } from '../lib/cn';
 
-export type ControlSize = 'sm' | 'md' | 'lg' | 'xl';
+export type ControlSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
-// 32 (compact toolbars), 36 (controls), 40 (dialogs), 44 (sign-in, touch)
+// 28 (inline in a sentence), 32 (compact toolbars), 36 (controls), 40 (dialogs), 44 (sign-in, touch)
 export const CONTROL_HEIGHTS: Record<ControlSize, string> = {
+  xs: 'h-7 text-[12px]',
   sm: 'h-8 text-[13px]',
   md: 'h-9 text-[14px]',
   lg: 'h-10 text-[14px]',

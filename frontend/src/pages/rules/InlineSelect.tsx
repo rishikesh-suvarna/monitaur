@@ -51,9 +51,10 @@ export function InlineSelect<T extends string | number>({
           if (picked) onChange(picked.value);
         }}
         className={cn(
-          inputClasses(size === 'lg' ? 'lg' : 'sm', invalid),
+          // Rules.dc.html: 28 px / 12 px inline selects. The size comes from inputClasses, not a competing class.
+          inputClasses(size === 'lg' ? 'lg' : 'xs', invalid),
           'select-caret cursor-pointer appearance-none pr-[30px]',
-          size === 'lg' ? 'font-semibold' : 'num h-7 pl-2 text-[12px]',
+          size === 'lg' ? 'font-semibold' : 'num pl-2',
           className,
         )}
         {...rest}

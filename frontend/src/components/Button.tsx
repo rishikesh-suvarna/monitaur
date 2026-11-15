@@ -3,7 +3,7 @@ import { Link, type LinkProps } from 'react-router-dom';
 
 import { cn } from '../lib/cn';
 
-import { buttonClasses, type ButtonStyleProps } from './buttonClasses';
+import { buttonClasses, type ButtonSize, type ButtonStyleProps, type ButtonVariant } from './buttonClasses';
 import { Loader } from './Loader';
 
 export type { ButtonSize, ButtonStyleProps, ButtonVariant } from './buttonClasses';
@@ -15,6 +15,10 @@ export interface ButtonProps extends ButtonStyleProps, ButtonHTMLAttributes<HTML
   trailingIcon?: ReactNode;
   ref?: Ref<HTMLButtonElement>;
 }
+
+/** Loader.dc.html: an 18 px eye in the default sizes, 14 px in small buttons. */
+const LOADER_SIZE: Record<ButtonSize, number> = { sm: 14, md: 18, touch: 18, lg: 18 };
+const FILLED_VARIANTS: ReadonlySet<ButtonVariant> = new Set(['primary', 'danger']);
 
 /** Primary is the only accent-filled control on a screen. */
 export function Button({
@@ -40,7 +44,12 @@ export function Button({
       className={cn(buttonClasses({ variant, size, block }), className)}
       {...rest}
     >
-      {loading ? <Loader size={size === 'sm' ? 14 : 16} label={null} /> : leadingIcon}
+      {loading ? (
+        // The eye is accent-coloured, except on filled buttons where it keeps the button's ink.
+        <Loader size={LOADER_SIZE[size ?? 'md']} label={null} className={FILLED_VARIANTS.has(variant ?? 'secondary') ? undefined : 'text-accent'} />
+      ) : (
+        leadingIcon
+      )}
       {children}
       {trailingIcon}
     </button>

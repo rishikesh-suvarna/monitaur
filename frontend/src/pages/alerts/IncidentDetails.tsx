@@ -8,6 +8,8 @@ import { checkPath } from '../../lib/checks';
 import { incidentDurationLabel, incidentPeak, incidentSubject, incidentThreshold, nextNotifyLabel, resolvedHowLabel } from '../../lib/incidents';
 import { ruleEditPath } from '../server-settings/ruleScope';
 
+import { IncidentSamples } from './IncidentSamples';
+
 function Row({ term, children }: { term: string; children: ReactNode }) {
   return (
     <>
@@ -28,7 +30,10 @@ export function IncidentDetails({ incident }: { incident: Incident }) {
   const subject = incidentSubject(incident);
   const check = subject.kind === 'check';
   return (
-    <dl className="num m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[12px] md:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+    // Alerts.dc.html: the samples chart and the facts share a wrapping row.
+    <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+      <IncidentSamples incident={incident} />
+      <dl className="num m-0 grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[12px] md:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
       <Row term={check ? 'Results over' : 'Samples over'}>{incident.samples_over.toLocaleString()}</Row>
       {check && subject.id !== null ? (
         <Row term="Check">
@@ -79,6 +84,7 @@ export function IncidentDetails({ incident }: { incident: Incident }) {
           {incident.resolved_at && ` · ${formatDayTime(incident.resolved_at, now)}`}
         </Row>
       )}
-    </dl>
+      </dl>
+    </div>
   );
 }

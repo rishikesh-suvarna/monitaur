@@ -1,13 +1,15 @@
 import { cn } from '../lib/cn';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-outline';
-export type ButtonSize = 'sm' | 'md' | 'lg';
+export type ButtonSize = 'sm' | 'md' | 'touch' | 'lg';
 
 const BASE =
   'inline-flex items-center justify-center whitespace-nowrap rounded border font-medium leading-none no-underline ' +
   'transition-[background-color,border-color,filter] duration-150 ease-out ' +
   'disabled:cursor-not-allowed disabled:opacity-[0.45] disabled:filter-none ' +
-  'aria-disabled:cursor-not-allowed aria-disabled:opacity-[0.45]';
+  'aria-disabled:cursor-not-allowed aria-disabled:opacity-[0.45] ' +
+  // Loader.dc.html: a busy button stays at full strength with a progress cursor (aria-busy is emitted after disabled).
+  'aria-busy:cursor-progress aria-busy:opacity-100';
 
 // Components.dc.html: .btn, .btn-p, .btn-g, .btn-d, .btn-do
 const VARIANTS: Record<ButtonVariant, string> = {
@@ -18,10 +20,11 @@ const VARIANTS: Record<ButtonVariant, string> = {
   'danger-outline': 'border-crit bg-transparent text-crit hover:bg-tint-crit hover:text-crit',
 };
 
-// h 36 · r 6 · sm 28 · lg 44
+// h 36 · r 6 · sm 28 · touch 40 (390 px boards) · lg 44
 const SIZES: Record<ButtonSize, string> = {
   sm: 'h-7 gap-1.5 px-2.5 text-[12px]',
   md: 'h-9 gap-2 px-3.5 text-[13px]',
+  touch: 'h-10 gap-2 px-3.5 text-[13px]',
   lg: 'h-11 gap-2 px-[18px] text-[14px]',
 };
 
