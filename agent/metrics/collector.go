@@ -7,6 +7,7 @@ import (
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 )
@@ -49,13 +50,11 @@ type NetInfo struct {
 
 type Collector struct {
 	serverName string
-	startTime  time.Time
 }
 
 func NewCollector(serverName string) *Collector {
 	return &Collector{
 		serverName: serverName,
-		startTime:  time.Now(),
 	}
 }
 
@@ -63,8 +62,15 @@ func (c *Collector) CollectMetrics() (*SystemMetrics, error) {
 	metrics := &SystemMetrics{
 		Timestamp:  time.Now(),
 		ServerName: c.serverName,
-		Uptime:     int64(time.Since(c.startTime).Seconds()),
 	}
+
+	// Host uptime, not agent process uptime: an agent restart must not look
+	// like a reboot on the dashboard.
+	uptimeSeconds, err := host.Uptime()
+	if err != nil {
+		return nil, fmt.Errorf("host uptime: %w", err)
+	}
+	metrics.Uptime = int64(uptimeSeconds)
 
 	// CPU metrics
 	cpuPercent, err := cpu.Percent(time.Second, false)
