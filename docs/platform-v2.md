@@ -385,9 +385,9 @@ Auth: `Authorization: Bearer <Firebase ID token>`. Password accounts need `email
 | POST | /me/sessions/revoke | any | | 204 (Firebase RevokeRefreshTokens) |
 | GET | /export | admin | | JSON attachment: org, servers, rules, channels (redacted), incidents, 30 d hourly metrics |
 | GET | /org | viewer | | `{org:{id,name,plan_id,status_page:{enabled,slug,title,server_ids}}, plan:{...limits}, usage:{servers,members,rules,channels,alert_emails_today}}` |
-| PATCH | /org | admin | `{name?, status_page?:{enabled,title,server_ids}}` | `{org}` |
+| PATCH | /org | admin | `{name?, slug?, status_page?:{enabled,title,server_ids}}` (slug: 3 to 40 of a-z, 0-9, -) | `{org}` |
 | GET | /org/members | viewer | | `{members:[{user_id,email,display_name,role,joined_at}], invites:[{id,email,role,expires_at}]}` |
-| POST | /org/invites | admin | `{email, role}` | 201 `{invite}` (email sent) |
+| POST | /org/invites | admin | `{email, role}` | 201 `{invite, invite_url, emailed}` (link returned so it can be shared when SMTP is off) |
 | DELETE | /org/invites/:id | admin | | 204 |
 | PATCH | /org/members/:userId | owner | `{role}` | `{member}` |
 | DELETE | /org/members/:userId | admin (self: any) | | 204 |
@@ -407,7 +407,7 @@ Auth: `Authorization: Bearer <Firebase ID token>`. Password accounts need `email
 | POST | /rules | member | Rule | 201 `{rule}` |
 | PATCH | /rules/:id | member | partial Rule | `{rule}` |
 | DELETE | /rules/:id | member | | 204 |
-| POST | /rules/preview | viewer | Rule | `{matched_servers, incidents:[{server_id,start,end,peak}], would_fire}` (last 7 d, minute buckets) |
+| POST | /rules/preview | viewer | Rule | `{matched_servers, previewed, window_hours, would_fire: number, incidents:[{server_id,start,end|null,peak}]}` (last 7 d of minute buckets, at most 10 servers) |
 | GET | /channels | viewer | | `{channels:[Channel]}` |
 | POST | /channels | admin | `{type,name,config}` | 201 `{channel}` |
 | PATCH | /channels/:id | admin | `{name?,enabled?,config?}` | `{channel}` |
