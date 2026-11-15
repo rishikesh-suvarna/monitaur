@@ -215,6 +215,8 @@ export interface ServerSummary {
   spark: ServerSpark;
   open_incidents: number;
   created_at: string;
+  /** Inside an active maintenance window: incidents are recorded but notifications are paused (section 6.4). */
+  maintenance: boolean;
   /**
    * Lowest warning and critical threshold of the enabled "above" rules that
    * apply to this server, keyed like `latest`. A metric without such a rule
@@ -247,6 +249,33 @@ export interface CreateServerResponse {
   /** Plaintext agent token. Returned once; the backend stores only a hash. */
   token: string;
   install: InstallInstructions;
+}
+
+/** One process from the agent's latest list (section 6.2). */
+export interface ServerProcess {
+  pid: number;
+  name: string;
+  user: string;
+  /** Percent CPU; can exceed 100 on multi-core hosts. */
+  cpu: number;
+  /** Percent of total memory. */
+  mem: number;
+  /** Resident set size, bytes. */
+  rss: number;
+  /** Command line, truncated by the agent to 200 characters. */
+  cmd: string;
+}
+
+/**
+ * GET /servers/:id/processes: the union of the top 15 by CPU and the top 15 by
+ * memory (at most 30). `at` is null and the list empty until the agent has sent
+ * one (older agents never do).
+ */
+export interface ProcessesResponse {
+  at: string | null;
+  /** Processes on the host, not just the ones listed. */
+  total: number;
+  processes: ServerProcess[];
 }
 
 export interface ServerTokenInfo {
@@ -523,6 +552,8 @@ export interface StreamServerUpdate {
   latest: ServerLatest | null;
   /** Reported on connect, which can happen after the list was cached. */
   agent_version?: string;
+  /** Section 6.4; absent from backends without maintenance windows. */
+  maintenance?: boolean;
 }
 
 export interface ServersStreamEvent {

@@ -30,6 +30,7 @@ export function useServerSummary(serverId: number | null, enabled = true) {
           latest: entry.latest,
           pinned: entry.pinned,
           open_incidents: entry.open_incidents,
+          maintenance: entry.maintenance,
         }
       : data.server;
   }

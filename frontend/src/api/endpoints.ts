@@ -16,6 +16,7 @@ import type {
   MeResponse,
   Org,
   OrgResponse,
+  ProcessesResponse,
   PublicStatusResponse,
   Role,
   RotateTokenResponse,
@@ -98,6 +99,9 @@ export function createEndpoints(client: ApiClient) {
         request<undefined>(`/servers/${seg(serverId)}/pin`, { method: 'DELETE', orgId }),
       series: (orgId: number, serverId: number, range: SeriesRange, signal?: AbortSignal) =>
         request<SeriesResponse>(`/servers/${seg(serverId)}/series`, { orgId, query: { range }, signal }),
+      /** Section 6.2: the agent's latest process list, from memory. */
+      processes: (orgId: number, serverId: number, signal?: AbortSignal) =>
+        request<ProcessesResponse>(`/servers/${seg(serverId)}/processes`, { orgId, signal }),
     },
 
     incidents: {

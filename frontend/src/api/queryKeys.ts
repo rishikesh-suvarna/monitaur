@@ -18,6 +18,7 @@ export const queryKeys = {
   serverSeriesAll: (orgId: number, serverId: number) => ['org', orgId, 'servers', 'series', serverId] as const,
   serverSeries: (orgId: number, serverId: number, range: SeriesRange) =>
     ['org', orgId, 'servers', 'series', serverId, range] as const,
+  serverProcesses: (orgId: number, serverId: number) => ['org', orgId, 'servers', 'processes', serverId] as const,
 
   incidentsAll: (orgId: number) => ['org', orgId, 'incidents'] as const,
   incidents: (orgId: number, filters: IncidentFilters) => ['org', orgId, 'incidents', filters] as const,

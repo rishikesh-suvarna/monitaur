@@ -7,6 +7,7 @@ import { useIsDesktop } from '../../hooks/useMediaQuery';
 
 import { AlertHistory } from './AlertHistory';
 import { MetricsTab } from './MetricsTab';
+import { ProcessesTab } from './ProcessesTab';
 import { parseServerId, parseTab, TAB_PARAM } from './routes';
 import { ServerHeader } from './ServerHeader';
 import { ServerBodySkeleton, ServerHeaderSkeleton, ServerNotFound } from './ServerStates';
@@ -14,8 +15,8 @@ import { LIST_REFRESH_FALLBACK_MS, useServerSummary } from './useServerSummary';
 
 /**
  * /servers/:id (ServerDetail.dc.html, ServerDetailLight.dc.html,
- * ServerDetailMobile.dc.html). Metrics and Alerts share the route and differ
- * by `?tab=`; Settings is /servers/:id/settings.
+ * ServerDetailMobile.dc.html). Metrics, Processes and Alerts share the route
+ * and differ by `?tab=`; Settings is /servers/:id/settings.
  */
 export default function ServerDetailPage() {
   const desktop = useIsDesktop();
@@ -50,7 +51,9 @@ export default function ServerDetailPage() {
         {detail.isError && (
           <ErrorState error={detail.error} staleSince={detail.dataUpdatedAt} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
         )}
-        {tab === 'metrics' ? <MetricsTab server={server} desktop={desktop} /> : <AlertHistory serverId={server.id} mode="full" compact={!desktop} />}
+        {tab === 'metrics' && <MetricsTab server={server} desktop={desktop} />}
+        {tab === 'processes' && <ProcessesTab server={server} desktop={desktop} />}
+        {tab === 'alerts' && <AlertHistory serverId={server.id} mode="full" compact={!desktop} />}
       </PageBody>
     </>
   );

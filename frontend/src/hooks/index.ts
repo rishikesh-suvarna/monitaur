@@ -11,11 +11,13 @@ export {
   useUpdateOrg,
 } from './api/org';
 export {
+  PROCESSES_REFRESH_MS,
   SERIES_REFRESH_MS,
   useCreateServer,
   useDeleteServer,
   useRotateServerToken,
   useServer,
+  useServerProcesses,
   useServers,
   useServerSeries,
   useSetServerPinned,

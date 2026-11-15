@@ -9,6 +9,7 @@ import { Button } from '../../components/Button';
 import { buttonClasses } from '../../components/buttonClasses';
 import { Chip } from '../../components/Chip';
 import { IconLink } from '../../components/IconButton';
+import { MaintenanceBadge } from '../../components/MaintenanceBadge';
 import { RelativeTime } from '../../components/RelativeTime';
 import { StatusBadge } from '../../components/StatusBadge';
 import { TabLinks } from '../../components/Tabs';
@@ -25,6 +26,7 @@ import {
   alertsForServer,
   serverAlertsTabPath,
   serverDetailPath,
+  serverProcessesTabPath,
   serverSettingsPath,
   VIEWER_EDIT_REASON,
   type ServerTab,
@@ -189,10 +191,13 @@ function ServerTabs({ server, tab, touch }: { server: ServerSummary; tab: Server
   return (
     <TabLinks
       aria-label="Server sections"
-      className={touch ? undefined : 'mt-1'}
-      itemClassName={touch ? 'h-11' : undefined}
+      // Four tabs at 390 px: a little less air between them so "12 open" still fits on one line.
+      // Important: cn is clsx, and .gap-6 (TabLinks' default) comes later in the CSS than .gap-5.
+      className={touch ? '!gap-5' : 'mt-1'}
+      itemClassName={touch ? 'h-11 whitespace-nowrap' : undefined}
       items={[
         { to: serverDetailPath(server.id), label: 'Metrics', active: tab === 'metrics' },
+        { to: serverProcessesTabPath(server.id), label: 'Processes', active: tab === 'processes' },
         {
           to: serverAlertsTabPath(server.id),
           label: (
@@ -239,8 +244,8 @@ export interface ServerHeaderProps {
 
 /**
  * ServerDetail.dc.html header: breadcrumb, mono name (wraps, never
- * truncates), status, tags with "+ tag", Pin, more actions, meta and the
- * Metrics / Alerts / Settings tabs. The settings variant
+ * truncates), status, maintenance, tags with "+ tag", Pin, more actions, meta
+ * and the Metrics / Processes / Alerts / Settings tabs. The settings variant
  * (ServerSettings.dc.html) keeps only the name, status and tabs.
  */
 export function ServerHeader({ server, tab, desktop }: ServerHeaderProps) {
@@ -263,6 +268,7 @@ export function ServerHeader({ server, tab, desktop }: ServerHeaderProps) {
           <>
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={server.status} />
+              {server.maintenance && <MaintenanceBadge size="md" interactive />}
               {server.tags.map((tag) => (
                 <Chip key={tag}>{tag}</Chip>
               ))}
@@ -306,6 +312,7 @@ export function ServerHeader({ server, tab, desktop }: ServerHeaderProps) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <h1 className="num m-0 min-w-0 text-h1 font-semibold [overflow-wrap:anywhere]">{server.name}</h1>
         <StatusBadge status={server.status} />
+        {server.maintenance && <MaintenanceBadge size="md" interactive />}
         {!settings && (
           <>
             <div className="flex flex-wrap items-center gap-1.5">

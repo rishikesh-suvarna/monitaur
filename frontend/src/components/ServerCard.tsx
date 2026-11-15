@@ -7,6 +7,7 @@ import { EMPTY_VALUE, formatDuration } from '../lib/format';
 import type { MetricBreaches } from '../lib/status';
 
 import { Chip } from './Chip';
+import { MaintenanceBadge } from './MaintenanceBadge';
 import { RelativeTime } from './RelativeTime';
 import { isStale, metricCells, serverPath, STRETCHED_LINK, VALUE_TONE_CLASS } from './serverMetrics';
 import { Sparkline } from './Sparkline';
@@ -38,6 +39,7 @@ export const ServerCard = memo(function ServerCard({ server, breaches, variant =
         <div className="flex min-w-0 items-center gap-2 text-[14px]">
           <StatusBadge status={server.status} variant="icon" />
           {name}
+          {server.maintenance && <MaintenanceBadge />}
           <RelativeTime value={server.last_seen} className={cn('flex-none text-[12px]', stale ? 'text-warn' : 'text-ink-faint')} />
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -69,6 +71,7 @@ export const ServerCard = memo(function ServerCard({ server, breaches, variant =
       <div className="flex min-w-0 items-center gap-2 text-[13px]">
         <StatusBadge status={server.status} variant="icon" />
         {name}
+        {server.maintenance && <MaintenanceBadge />}
       </div>
       {server.tags.length > 0 && (
         <div className="flex flex-wrap gap-1">

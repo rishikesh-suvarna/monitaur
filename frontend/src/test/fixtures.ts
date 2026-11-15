@@ -48,6 +48,7 @@ export function makeServer(overrides: Partial<ServerSummary> & Pick<ServerSummar
     spark: { cpu: [], mem: [], disk: [] },
     open_incidents: 0,
     created_at: '2026-11-01T00:00:00Z',
+    maintenance: false,
     thresholds: {},
     ...overrides,
   };

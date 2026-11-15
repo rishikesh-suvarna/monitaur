@@ -15,6 +15,7 @@ export { Field, Input } from './Input';
 export { CONTROL_HEIGHTS, hintClasses, inputClasses, labelClasses, type ControlSize } from './inputClasses';
 export { Kbd } from './Kbd';
 export { LimitReachedHint, PLAN_SETTINGS_PATH, type LimitReachedHintProps } from './LimitReachedHint';
+export { MAINTENANCE_EXPLANATION, MaintenanceBadge, type MaintenanceBadgeProps } from './MaintenanceBadge';
 export { LiveDot } from './LiveDot';
 export { LiveIndicator } from './LiveIndicator';
 export { FullScreenLoader, Loader } from './Loader';

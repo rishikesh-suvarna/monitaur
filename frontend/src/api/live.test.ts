@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { backoffDelay, BACKOFF_MAX_MS } from '../lib/backoff';
 import { makeIncident, makeServer } from '../test/fixtures';
 
-import { openIncidentDelta, patchIncidentsList, patchServersList } from './cachePatches';
+import { openIncidentDelta, patchIncidentsList, patchServerDetail, patchServersList } from './cachePatches';
 import { createSseParser, type SseMessage } from './sse';
 import type { IncidentsResponse } from './types';
 
@@ -88,6 +88,25 @@ describe('servers cache patch', () => {
     // Older backends omit the field: keep what the cache had.
     const { next: kept } = patchServersList(next, [live]);
     expect(kept.servers[0]?.agent_version).toBe('v2.0.0');
+  });
+
+  it('follows a maintenance window starting and ending, in the list and the detail', () => {
+    const a = makeServer({ id: 1, name: 'a', maintenance: false });
+    const live = { id: 1, status: a.status, connected: a.connected, last_seen: a.last_seen, latest: a.latest };
+    const started = patchServersList({ servers: [a] }, [{ ...live, maintenance: true }]).next;
+    expect(started.servers[0]?.maintenance).toBe(true);
+    expect(patchServersList(started, [{ ...live, maintenance: false }]).next.servers[0]?.maintenance).toBe(false);
+
+    const detail = { server: a, token: { prefix: 'mt_live_ab', created_at: a.created_at, last_used_at: null }, counts: { incidents: 0, rules: 0, metrics_days: 0 } };
+    expect(patchServerDetail(detail, { ...live, maintenance: true }).server.maintenance).toBe(true);
+  });
+
+  it('keeps the cached maintenance flag when an older backend leaves it out', () => {
+    const a = makeServer({ id: 1, name: 'a', maintenance: true });
+    const current = { servers: [a] };
+    const { next } = patchServersList(current, [{ id: 1, status: a.status, connected: a.connected, last_seen: a.last_seen, latest: a.latest }]);
+    expect(next).toBe(current);
+    expect(next.servers[0]?.maintenance).toBe(true);
   });
 });
 
