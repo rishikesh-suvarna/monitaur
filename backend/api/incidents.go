@@ -9,6 +9,7 @@ import (
 
 	"backend/alerting"
 	"backend/auth"
+	"backend/checks"
 	"backend/store"
 )
 
@@ -22,6 +23,9 @@ type incidentJSON struct {
 
 func (a *API) incidentJSON(orgID int64, i store.Incident) incidentJSON {
 	out := incidentJSON{Incident: i, State: i.State(), Comparison: string(alerting.Above), Unit: UnitFor(i.Metric)}
+	if i.CheckID != nil && i.Metric == checks.MetricTLSExpiry {
+		out.Comparison = string(alerting.Below) // days left fell below tls_warn_days
+	}
 	if i.RuleID == nil {
 		return out
 	}
@@ -54,7 +58,7 @@ func (a *API) listIncidents(c *gin.Context) {
 		invalid(c, "state must be open, acked, resolved or all")
 		return
 	}
-	for name, dst := range map[string]*int64{"server_id": &f.ServerID, "before": &f.BeforeID} {
+	for name, dst := range map[string]*int64{"server_id": &f.ServerID, "check_id": &f.CheckID, "before": &f.BeforeID} {
 		if v := c.Query(name); v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil || n <= 0 {
@@ -116,8 +120,12 @@ func (a *API) resolveIncident(c *gin.Context) {
 	}
 	if inc.ResolvedAt == nil {
 		now := a.Now()
-		if err := a.Engine.Resolve(ctx, id, now); err != nil {
-			// Not tracked by the engine (e.g. its rule was deleted): close it
+		resolve := a.Engine.Resolve
+		if inc.CheckID != nil {
+			resolve = a.Checks.Resolve // check incidents live in the check scheduler
+		}
+		if err := resolve(ctx, id, now); err != nil {
+			// Not tracked in memory (e.g. its rule was deleted): close it
 			// in the database directly.
 			if err := a.Store.ResolveIncident(ctx, id, now, "manual", inc.Peak, inc.SamplesOver, &p.User.ID); err != nil {
 				a.handleErr(c, err)

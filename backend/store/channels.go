@@ -121,7 +121,8 @@ WHERE org_id = $1 AND id = $2
 RETURNING `+channelColumns, orgID, id, name, enabled, sealed))
 }
 
-// DeleteChannel also removes the channel from every rule that routed to it.
+// DeleteChannel also removes the channel from every rule and check that
+// routed to it.
 func (s *Store) DeleteChannel(ctx context.Context, orgID, id int64) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM notification_channels WHERE org_id = $1 AND id = $2`, orgID, id)
@@ -131,8 +132,13 @@ func (s *Store) DeleteChannel(ctx context.Context, orgID, id int64) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		_, err = tx.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 UPDATE alert_rules SET channel_ids = array_remove(channel_ids, $2), updated_at = now()
+WHERE org_id = $1 AND $2 = ANY(channel_ids)`, orgID, id); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+UPDATE checks SET channel_ids = array_remove(channel_ids, $2), updated_at = now()
 WHERE org_id = $1 AND $2 = ANY(channel_ids)`, orgID, id)
 		return err
 	})

@@ -88,6 +88,7 @@ func (a *API) deleteMe(c *gin.Context) {
 			a.Hub.Disconnect(sid)
 		}
 		a.Engine.SetOrgRules(d.OrgID, nil)
+		a.Checks.RemoveOrg(d.OrgID)
 		a.Auth.InvalidateOrg(d.OrgID)
 	}
 	a.Dir.ForgetUser(id.User.ID)

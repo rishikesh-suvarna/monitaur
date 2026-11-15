@@ -33,6 +33,9 @@ type Plan struct {
 	MaxRules           int    `json:"max_rules"`
 	MaxChannels        int    `json:"max_channels"`
 	APIRPM             int    `json:"api_rpm"`
+	// F7 uptime checks.
+	MaxChecks               int `json:"max_checks"`
+	MinCheckIntervalSeconds int `json:"min_check_interval_seconds"`
 }
 
 func (p Plan) MinInterval() time.Duration { return time.Duration(p.MinIntervalSeconds) * time.Second }
@@ -41,6 +44,9 @@ type StatusPage struct {
 	Enabled   bool    `json:"enabled"`
 	Title     string  `json:"title"`
 	ServerIDs []int64 `json:"server_ids"`
+	// CheckIDs nil in an OrgPatch leaves them unchanged, so clients that
+	// predate checks do not clear them when saving the status page.
+	CheckIDs []int64 `json:"check_ids"`
 }
 
 type Org struct {
@@ -88,9 +94,9 @@ type Usage struct {
 const (
 	userColumns = `id, firebase_uid, email, display_name, email_verified, created_at`
 	orgColumns  = `o.id, o.name, o.slug, o.plan_id, o.personal_owner_id, o.defaults_seeded,
-		o.status_page_enabled, o.status_page_title, o.status_page_server_ids, o.created_at`
+		o.status_page_enabled, o.status_page_title, o.status_page_server_ids, o.created_at, o.status_page_check_ids`
 	planColumns = `id, name, max_servers, min_interval_seconds, retention_1m_days, retention_1h_days,
-		max_members, alert_emails_per_day, max_rules, max_channels, api_rpm`
+		max_members, alert_emails_per_day, max_rules, max_channels, api_rpm, max_checks, min_check_interval_seconds`
 	slugRandomBytes   = 4
 	personalOrgName   = "Personal"
 	maxDisplayNameLen = 80
@@ -105,8 +111,11 @@ func scanUser(row pgx.Row) (User, error) {
 func scanOrg(row pgx.Row, extra ...any) (Org, error) {
 	var o Org
 	dest := append([]any{&o.ID, &o.Name, &o.Slug, &o.PlanID, &o.PersonalOwnerID, &o.DefaultsSeeded,
-		&o.StatusPage.Enabled, &o.StatusPage.Title, &o.StatusPage.ServerIDs, &o.CreatedAt}, extra...)
+		&o.StatusPage.Enabled, &o.StatusPage.Title, &o.StatusPage.ServerIDs, &o.CreatedAt, &o.StatusPage.CheckIDs}, extra...)
 	err := row.Scan(dest...)
+	if o.StatusPage.CheckIDs == nil {
+		o.StatusPage.CheckIDs = []int64{}
+	}
 	return o, mapErr(err)
 }
 
@@ -232,12 +241,18 @@ func (s *Store) UpdateOrg(ctx context.Context, id int64, p OrgPatch) (Org, error
 		spTitle   *string
 		spServers []int64
 		spSet     bool
+		spChecks  []int64
+		spChkSet  bool
 	)
 	if p.StatusPage != nil {
 		spEnabled, spTitle, spServers, spSet = &p.StatusPage.Enabled, &p.StatusPage.Title, p.StatusPage.ServerIDs, true
 		if spServers == nil {
 			spServers = []int64{}
 		}
+		spChecks, spChkSet = p.StatusPage.CheckIDs, p.StatusPage.CheckIDs != nil
+	}
+	if spChecks == nil {
+		spChecks = []int64{}
 	}
 	return scanOrg(s.pool.QueryRow(ctx, `
 UPDATE organizations o SET
@@ -247,16 +262,19 @@ UPDATE organizations o SET
 	status_page_title = COALESCE($5, o.status_page_title),
 	status_page_server_ids = CASE WHEN $7 THEN
 		ARRAY(SELECT s.id FROM servers s WHERE s.org_id = o.id AND s.id = ANY($6::bigint[]) ORDER BY s.name)
-		ELSE o.status_page_server_ids END
+		ELSE o.status_page_server_ids END,
+	status_page_check_ids = CASE WHEN $9 THEN
+		ARRAY(SELECT c.id FROM checks c WHERE c.org_id = o.id AND c.id = ANY($8::bigint[]) ORDER BY c.name, c.id)
+		ELSE o.status_page_check_ids END
 WHERE o.id = $1
-RETURNING `+orgColumns, id, p.Name, p.Slug, spEnabled, spTitle, spServers, spSet))
+RETURNING `+orgColumns, id, p.Name, p.Slug, spEnabled, spTitle, spServers, spSet, spChecks, spChkSet))
 }
 
 func (s *Store) GetPlan(ctx context.Context, id string) (Plan, error) {
 	var p Plan
 	err := s.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM plans WHERE id = $1`, id).Scan(
 		&p.ID, &p.Name, &p.MaxServers, &p.MinIntervalSeconds, &p.Retention1mDays, &p.Retention1hDays,
-		&p.MaxMembers, &p.AlertEmailsPerDay, &p.MaxRules, &p.MaxChannels, &p.APIRPM)
+		&p.MaxMembers, &p.AlertEmailsPerDay, &p.MaxRules, &p.MaxChannels, &p.APIRPM, &p.MaxChecks, &p.MinCheckIntervalSeconds)
 	return p, mapErr(err)
 }
 
@@ -270,7 +288,7 @@ func (s *Store) ListPlans(ctx context.Context) ([]Plan, error) {
 	for rows.Next() {
 		var p Plan
 		if err := rows.Scan(&p.ID, &p.Name, &p.MaxServers, &p.MinIntervalSeconds, &p.Retention1mDays, &p.Retention1hDays,
-			&p.MaxMembers, &p.AlertEmailsPerDay, &p.MaxRules, &p.MaxChannels, &p.APIRPM); err != nil {
+			&p.MaxMembers, &p.AlertEmailsPerDay, &p.MaxRules, &p.MaxChannels, &p.APIRPM, &p.MaxChecks, &p.MinCheckIntervalSeconds); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

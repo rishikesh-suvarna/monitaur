@@ -16,6 +16,7 @@ import (
 	"backend/alerting"
 	"backend/api"
 	"backend/auth"
+	"backend/checks"
 	"backend/config"
 	"backend/directory"
 	"backend/ingest"
@@ -50,6 +51,7 @@ type App struct {
 	auth       *auth.Service
 	metrics    *metrics.Store
 	engine     *alerting.Engine
+	checks     *checks.Scheduler
 	dispatcher *notify.Dispatcher
 	hub        *ingest.Hub
 	broker     *api.Broker
@@ -64,9 +66,11 @@ type App struct {
 	// Maintenance bookkeeping: which open incidents were announced to a
 	// channel, and which fired inside a window and still need announcing if
 	// they outlive it.
-	announceMu  sync.Mutex
-	announced   map[int64]bool
-	unannounced map[int64]alerting.Event
+	announceMu         sync.Mutex
+	announced          map[int64]bool
+	unannounced        map[int64]alerting.Event
+	unannouncedChecks  map[int64]checks.Event
+	lastCheckRetention time.Time
 }
 
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, verifier auth.Verifier) (*App, error) {
@@ -78,7 +82,8 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, log: log, ctx: ctx, announced: map[int64]bool{}, unannounced: map[int64]alerting.Event{}}
+	a := &App{cfg: cfg, log: log, ctx: ctx, announced: map[int64]bool{}, unannounced: map[int64]alerting.Event{},
+		unannouncedChecks: map[int64]checks.Event{}}
 	a.store = store.New(pool, box)
 	a.dir = directory.New(a.store)
 	if err := a.dir.Load(ctx); err != nil {
@@ -115,12 +120,22 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	if err := a.engine.Load(ctx, api.RulesToAlerting(a.dir.AllRules()), infos); err != nil {
 		return nil, fmt.Errorf("load alerting engine: %w", err)
 	}
-	if open, err := a.store.LoadOpenIncidents(ctx); err == nil {
+	// Incidents announced before a restart keep getting their "resolved".
+	for _, load := range []func(context.Context) ([]store.Incident, error){a.store.LoadOpenIncidents, a.store.LoadOpenCheckIncidents} {
+		open, err := load(ctx)
+		if err != nil {
+			continue
+		}
 		for _, inc := range open {
 			if len(inc.NotifiedChannels) > 0 {
 				a.announced[inc.ID] = true
 			}
 		}
+	}
+	a.checks = checks.NewScheduler(checks.Config{Workers: checkWorkers, AllowPrivate: cfg.Checks.AllowPrivateTargets},
+		checkStore{a.store}, checkNotifier{a}, log)
+	if err := a.checks.Load(ctx, api.ChecksToScheduler(a.dir.AllChecks())); err != nil {
+		return nil, fmt.Errorf("load uptime checks: %w", err)
 	}
 
 	mcfg := metrics.DefaultConfig()
@@ -130,6 +145,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 		return nil, fmt.Errorf("init metrics store: %w", err)
 	}
 	a.metrics.OnFlush(a.housekeeping)
+	a.metrics.OnFlush(a.checksHousekeeping)
 
 	a.hub = ingest.NewHub(a.dir, recorder{a}, a.limiter, cfg.Server.Origins(), log)
 	a.auth = auth.NewService(verifier, a.store, auth.Config{
@@ -143,7 +159,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	a.api = api.New(api.Deps{
 		Config: cfg, Store: a.store, Auth: a.auth, Dir: a.dir, Metrics: a.metrics, Engine: a.engine,
 		Dispatcher: a.dispatcher, Hub: a.hub, Broker: a.broker, Limiter: a.limiter, Budget: a.budget, Log: log,
-		Silenced: a.silenced,
+		Checks: a.checks, Silenced: a.silenced,
 	})
 	return a, nil
 }
@@ -164,6 +180,7 @@ func (a *App) Run(ctx context.Context) {
 		}
 	})
 	start(func() { a.dispatcher.Run(ctx) })
+	start(func() { a.checks.Run(ctx) })
 	start(func() {
 		a.every(ctx, engineTickEvery, func() {
 			a.engine.Tick(ctx)
@@ -481,7 +498,7 @@ func liveIncident(ev alerting.Event, channels []string) map[string]any {
 		"threshold":  ev.Rule.Threshold, "peak": ev.Incident.Peak, "last_value": ev.Incident.LastValue,
 		"unit": api.UnitFor(string(ev.Rule.Metric)), "samples_over": ev.Incident.SamplesOver,
 		"started_at": ev.Incident.StartedAt, "resolved_at": resolvedAt, "acked_at": ev.Incident.AckedAt,
-		"notified_channels": channels,
+		"notified_channels": channels, "check_id": nil, "check_name": nil,
 	}
 }
 
@@ -522,7 +539,20 @@ func (a *App) announceAfterMaintenance() {
 			delete(a.unannounced, id)
 		}
 	}
+	// Pending check incidents are still open: a resolve removes them.
+	var dueChecks []checks.Event
+	for id, ev := range a.unannouncedChecks {
+		if !a.silenced(ev.Check.OrgID, 0, ev.Check.ID, now) {
+			dueChecks = append(dueChecks, ev)
+			delete(a.unannouncedChecks, id)
+		}
+	}
 	a.announceMu.Unlock()
+
+	for _, ev := range dueChecks {
+		ev.At = now
+		checkNotifier{a}.Notify(a.ctx, ev)
+	}
 
 	for _, ev := range due {
 		open := false

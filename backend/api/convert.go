@@ -54,13 +54,16 @@ func RulesToAlerting(rs []store.Rule) []alerting.Rule {
 
 func IncidentToAlerting(i store.Incident) alerting.Incident {
 	out := alerting.Incident{
-		ID: i.ID, OrgID: i.OrgID, ServerID: i.ServerID, RuleName: i.RuleName,
+		ID: i.ID, OrgID: i.OrgID, RuleName: i.RuleName,
 		Metric: alerting.Metric(i.Metric), Severity: alerting.Severity(i.Severity),
 		Threshold: i.Threshold, Peak: i.Peak, LastValue: i.LastValue, SamplesOver: i.SamplesOver,
 		StartedAt: i.StartedAt, LastNotifiedAt: i.LastNotifiedAt, AckedAt: i.AckedAt,
 	}
 	if i.RuleID != nil {
 		out.RuleID = *i.RuleID
+	}
+	if i.ServerID != nil {
+		out.ServerID = *i.ServerID
 	}
 	return out
 }

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,6 +59,8 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 		Metrics:  config.MetricsConfig{FlushInterval: time.Hour, RawWindow: time.Hour, RecentWindow: 24 * time.Hour, JournalDir: t.TempDir()},
 		Limits:   config.LimitsConfig{DefaultPlan: "free"},
 		Secrets:  config.SecretsConfig{EncryptionKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))},
+		// Uptime check targets are httptest servers on loopback.
+		Checks: config.ChecksConfig{AllowPrivateTargets: true},
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -604,5 +607,222 @@ func TestMaintenanceWindows(t *testing.T) {
 	e.must(http.StatusNoContent, alice, "DELETE", laterPath, nil)
 	if code, _ := e.do(alice, "DELETE", laterPath, nil); code != http.StatusNotFound {
 		t.Fatalf("second delete = %d, want 404", code)
+	}
+}
+
+func findByID(items []any, id int) map[string]any {
+	for _, it := range items {
+		if m, ok := it.(map[string]any); ok && num(m["id"]) == id {
+			return m
+		}
+	}
+	return nil
+}
+
+// streamEvent reads the SSE stream until the named event and returns its data.
+func (e *env) streamEvent(token, event string) string {
+	e.t.Helper()
+	req, _ := http.NewRequest("GET", e.srv.URL+"/api/v1/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
+	defer cancel()
+	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		if sc.Text() == "event: "+event && sc.Scan() {
+			return strings.TrimPrefix(sc.Text(), "data: ")
+		}
+	}
+	e.t.Fatalf("no %s event on the stream", event)
+	return ""
+}
+
+func TestUptimeChecks(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := user("alice"), user("bob")
+	e.must(http.StatusOK, alice, "GET", "/api/v1/me", nil)
+	e.must(http.StatusOK, bob, "GET", "/api/v1/me", nil)
+
+	var healthy atomic.Bool
+	healthy.Store(true)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("all good"))
+	}))
+	defer target.Close()
+
+	// Validation per type and plan (free: 60 s minimum interval). A separate
+	// user keeps alice under the per-user API burst.
+	vera := user("vera")
+	for _, body := range []map[string]any{
+		{"name": "", "type": "http", "target": target.URL},
+		{"name": strings.Repeat("x", 61), "type": "http", "target": target.URL},
+		{"name": "x", "type": "ping", "target": target.URL},
+		{"name": "x", "type": "http", "target": "ftp://example.com"},
+		{"name": "x", "type": "http", "target": "https://user:pass@example.com"},
+		{"name": "x", "type": "tcp", "target": "example.com"},
+		{"name": "x", "type": "tcp", "target": "example.com:99999"},
+		{"name": "x", "type": "http", "target": target.URL, "interval_seconds": 30},
+		{"name": "x", "type": "http", "target": target.URL, "timeout_seconds": 31},
+		{"name": "x", "type": "http", "target": target.URL, "timeout_seconds": 0},
+		{"name": "x", "type": "http", "target": target.URL, "expect_status": 700},
+		{"name": "x", "type": "http", "target": target.URL, "channel_ids": []int{424242}},
+	} {
+		if code, out := e.do(vera, "POST", "/api/v1/checks", body); code != http.StatusBadRequest || out["code"] != "invalid" {
+			t.Fatalf("create %v = %d %v, want 400 invalid", body, code, out)
+		}
+	}
+
+	created := obj(e.must(http.StatusCreated, alice, "POST", "/api/v1/checks",
+		map[string]any{"name": "api", "type": "http", "target": target.URL + "/health", "keyword": "good"}), "check")
+	id := num(created["id"])
+	if created["interval_seconds"] != 60.0 || created["timeout_seconds"] != 10.0 || created["tls_warn_days"] != 14.0 ||
+		created["enabled"] != true || created["maintenance"] != false || created["keyword"] != "good" ||
+		(created["status"] != "pending" && created["status"] != "up") {
+		t.Fatalf("created = %v", created)
+	}
+	// tls targets default to port 443; http-only settings are cleared.
+	cert := obj(e.must(http.StatusCreated, alice, "POST", "/api/v1/checks",
+		map[string]any{"name": "cert", "type": "tls", "target": "example.com", "keyword": "x", "enabled": false}), "check")
+	if cert["target"] != "example.com:443" || cert["keyword"] != "" || cert["status"] != "paused" {
+		t.Fatalf("tls check = %v", cert)
+	}
+
+	// Run now, then make the target fail: two failures take it down.
+	path := fmt.Sprintf("/api/v1/checks/%d", id)
+	res := obj(e.must(http.StatusOK, alice, "POST", path+"/run", nil), "result")
+	if res["ok"] != true || res["status_code"] != 200.0 || res["error"] != nil || res["latency_ms"] == nil {
+		t.Fatalf("run = %v", res)
+	}
+	healthy.Store(false)
+	for range 2 {
+		res = obj(e.must(http.StatusOK, alice, "POST", path+"/run", nil), "result")
+		if res["ok"] != false || res["status_code"] != 503.0 || !strings.Contains(fmt.Sprint(res["error"]), "503") {
+			t.Fatalf("run while down = %v", res)
+		}
+	}
+	if code, out := e.do(alice, "POST", path+"/run", nil); code != http.StatusTooManyRequests || out["code"] != "rate_limited" {
+		t.Fatalf("4th run = %d %v, want rate limited", code, out)
+	}
+	chk := findByID(list(e.must(http.StatusOK, alice, "GET", "/api/v1/checks", nil), "checks"), id)
+	last := obj(chk, "last")
+	if chk["status"] != "down" || num(chk["open_incidents"]) != 1 || last["ok"] != false ||
+		chk["uptime_24h"] == nil || chk["uptime_24h"].(float64) >= 100 || len(list(chk, "latency_spark")) < 3 {
+		t.Fatalf("check after failures = %v", chk)
+	}
+
+	// The incident names the check and has no server.
+	incs := list(e.must(http.StatusOK, alice, "GET", fmt.Sprintf("/api/v1/incidents?state=open&check_id=%d", id), nil), "incidents")
+	if len(incs) != 1 {
+		t.Fatalf("check incidents = %v", incs)
+	}
+	inc := incs[0].(map[string]any)
+	incID := num(inc["id"])
+	if num(inc["check_id"]) != id || inc["check_name"] != "api" || inc["server_id"] != nil || inc["server_name"] != "api" ||
+		inc["metric"] != "http" || inc["severity"] != "critical" || inc["rule_id"] != nil || inc["state"] != "open" {
+		t.Fatalf("check incident = %v", inc)
+	}
+
+	// History: 24h from memory, 7d from rollups plus unflushed results.
+	day := e.must(http.StatusOK, alice, "GET", path+"/results?range=24h", nil)
+	points := list(day, "points")
+	if day["range"] != "24h" || day["step_seconds"] != 900.0 || len(points) != 96 {
+		t.Fatalf("24h results = %v", day)
+	}
+	lastPoint := points[len(points)-1].(map[string]any)
+	if lastPoint["up_pct"] == nil || lastPoint["up_pct"].(float64) >= 100 {
+		t.Fatalf("latest step = %v", lastPoint)
+	}
+	if week := e.must(http.StatusOK, alice, "GET", path+"/results?range=7d", nil); len(list(week, "points")) != 168 {
+		t.Fatalf("7d results = %v", week)
+	}
+	if code, _ := e.do(alice, "GET", path+"/results?range=1y", nil); code != http.StatusBadRequest {
+		t.Fatalf("bad range = %d", code)
+	}
+
+	// Live updates carry check status.
+	if data := e.streamEvent(alice, "checks"); !strings.Contains(data, fmt.Sprintf(`"id":%d,"status":"down"`, id)) {
+		t.Fatalf("checks event = %s", data)
+	}
+
+	// Tenant isolation: another org's check IDs are 404 everywhere.
+	for _, req := range []struct{ method, path string }{
+		{"PATCH", path}, {"DELETE", path}, {"POST", path + "/run"}, {"GET", path + "/results"},
+		{"POST", fmt.Sprintf("/api/v1/incidents/%d/resolve", incID)},
+	} {
+		if code, _ := e.do(bob, req.method, req.path, map[string]any{"name": "pwned"}); code != http.StatusNotFound {
+			t.Fatalf("bob %s %s = %d, want 404", req.method, req.path, code)
+		}
+	}
+	if out := e.must(http.StatusOK, bob, "GET", "/api/v1/checks", nil); len(list(out, "checks")) != 0 {
+		t.Fatalf("bob sees checks: %v", out)
+	}
+	bobOrg := e.must(http.StatusOK, bob, "PATCH", "/api/v1/org", map[string]any{"status_page": map[string]any{
+		"enabled": true, "server_ids": []int{}, "check_ids": []int{id}}})
+	if ids := list(obj(obj(bobOrg, "org"), "status_page"), "check_ids"); len(ids) != 0 {
+		t.Fatalf("bob put alice's check on his status page: %v", ids)
+	}
+
+	// Status page lists the check next to servers, with its kind.
+	orgOut := e.must(http.StatusOK, alice, "GET", "/api/v1/org", nil)
+	if num(obj(orgOut, "plan")["max_checks"]) != 3 || num(obj(orgOut, "usage")["checks"]) != 2 {
+		t.Fatalf("org = %v", orgOut)
+	}
+	slug := obj(obj(orgOut, "org"), "status_page")["slug"].(string)
+	updated := e.must(http.StatusOK, alice, "PATCH", "/api/v1/org", map[string]any{"status_page": map[string]any{
+		"enabled": true, "title": "Alice status", "server_ids": []int{}, "check_ids": []int{id}}})
+	if ids := list(obj(obj(updated, "org"), "status_page"), "check_ids"); len(ids) != 1 || num(ids[0]) != id {
+		t.Fatalf("status page check ids = %v", ids)
+	}
+	status := e.must(http.StatusOK, "", "GET", "/api/v1/public/status/"+slug, nil)
+	services := list(status, "services")
+	if status["overall"] != "critical" || len(services) != 1 {
+		t.Fatalf("status page = %v", status)
+	}
+	svc := services[0].(map[string]any)
+	if svc["kind"] != "check" || svc["name"] != "api" || svc["status"] != "critical" || svc["uptime_pct"] != nil || len(list(svc, "days")) != 90 {
+		t.Fatalf("check service = %v", svc)
+	}
+	if recent := list(status, "incidents"); len(recent) != 1 || recent[0].(map[string]any)["service"] != "api" {
+		t.Fatalf("status page incidents = %v", recent)
+	}
+
+	// Manual resolve goes through the scheduler, which stops counting the
+	// outage: the check is degraded (last probe failed), not down.
+	resolved := obj(e.must(http.StatusOK, alice, "POST", fmt.Sprintf("/api/v1/incidents/%d/resolve", incID), nil), "incident")
+	if resolved["state"] != "resolved" || resolved["resolved_how"] != "manual" || resolved["check_name"] != "api" {
+		t.Fatalf("resolved = %v", resolved)
+	}
+	if chk := findByID(list(e.must(http.StatusOK, alice, "GET", "/api/v1/checks", nil), "checks"), id); chk["status"] != "degraded" || num(chk["open_incidents"]) != 0 {
+		t.Fatalf("check after manual resolve = %v", chk)
+	}
+
+	// Pause, quota, delete.
+	paused := obj(e.must(http.StatusOK, alice, "PATCH", path, map[string]any{"enabled": false, "name": "api-v2"}), "check")
+	if paused["status"] != "paused" || paused["name"] != "api-v2" || paused["target"] != target.URL+"/health" {
+		t.Fatalf("paused = %v", paused)
+	}
+	e.must(http.StatusCreated, alice, "POST", "/api/v1/checks", map[string]any{"name": "third", "type": "tcp",
+		"target": strings.TrimPrefix(target.URL, "http://"), "enabled": false})
+	if _, out := e.do(alice, "POST", "/api/v1/checks", map[string]any{"name": "fourth", "type": "tcp",
+		"target": strings.TrimPrefix(target.URL, "http://")}); out["code"] != "limit_reached" {
+		t.Fatalf("4th check = %v", out)
+	}
+	e.must(http.StatusNoContent, alice, "DELETE", path, nil)
+	if remaining := list(e.must(http.StatusOK, alice, "GET", "/api/v1/checks", nil), "checks"); len(remaining) != 2 || findByID(remaining, id) != nil {
+		t.Fatalf("checks after delete = %v", remaining)
+	}
+	if ids := list(obj(obj(e.must(http.StatusOK, alice, "GET", "/api/v1/org", nil), "org"), "status_page"), "check_ids"); len(ids) != 0 {
+		t.Fatalf("deleted check still on the status page: %v", ids)
+	}
+	if code, _ := e.do(alice, "GET", path+"/results", nil); code != http.StatusNotFound {
+		t.Fatalf("results of a deleted check = %d", code)
 	}
 }

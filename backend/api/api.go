@@ -17,6 +17,7 @@ import (
 
 	"backend/alerting"
 	"backend/auth"
+	"backend/checks"
 	"backend/config"
 	"backend/directory"
 	"backend/ingest"
@@ -50,9 +51,10 @@ type Deps struct {
 	Budget     *limits.EmailBudget
 	Log        *slog.Logger
 	Now        func() time.Time
-	// Silenced reports whether a maintenance window covers a server (or a
-	// check) at a time; app owns the evaluation so alerts and the API agree.
-	// Nil means no maintenance support.
+	Checks     *checks.Scheduler
+	// Silenced reports whether a maintenance window mutes a server or check
+	// (0 for the one not concerned) at a time; app owns the evaluation so alerts
+	// and the API agree. Nil means never.
 	Silenced func(orgID, serverID, checkID int64, at time.Time) bool
 }
 
@@ -145,6 +147,12 @@ func (a *API) Router() *gin.Engine {
 	org.POST("/maintenance", member, a.createMaintenance)
 	org.PATCH("/maintenance/:id", member, a.patchMaintenance)
 	org.DELETE("/maintenance/:id", member, a.deleteMaintenance)
+	org.GET("/checks", viewer, a.listChecks)
+	org.POST("/checks", member, a.createCheck)
+	org.PATCH("/checks/:id", member, a.patchCheck)
+	org.DELETE("/checks/:id", member, a.deleteCheck)
+	org.POST("/checks/:id/run", member, a.runCheck)
+	org.GET("/checks/:id/results", viewer, a.checkResults)
 
 	r.NoRoute(func(c *gin.Context) { fail(c, http.StatusNotFound, "not_found", "no such endpoint") })
 	return r
