@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [ main ]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR supersedes the running check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    name: Agent (vet, test -race)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: agent/go.mod
+        cache-dependency-path: agent/go.sum
+
+    - name: Vet
+      run: go vet ./...
+
+    - name: Test
+      run: go test -race ./...
+
+  backend:
+    name: Backend (vet, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: monitaur_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d monitaur_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # DB tests skip themselves when this is unset, so they still run locally
+      # without Postgres.
+      MONITAUR_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/monitaur_test?sslmode=disable
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: backend/go.mod
+        cache-dependency-path: backend/go.sum
+
+    - name: Vet
+      run: go vet ./...
+
+    - name: Test
+      run: go test ./...
+
+  frontend:
+    name: Frontend (lint, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: yarn
+        cache-dependency-path: frontend/yarn.lock
+
+    - name: Install dependencies
+      # yarn.lock is Yarn 1, which silently ignores --immutable.
+      run: yarn install --frozen-lockfile
+
+    - name: Typecheck
+      run: if grep -q '"typecheck"' package.json; then yarn typecheck; fi
+
+    - name: Test
+      run: if grep -q '"test"' package.json; then yarn test; fi
+
+    - name: Lint
+      # The JSX codebase on main does not pass eslint yet. Lint turns on with
+      # the TypeScript rewrite, which adds the typecheck script.
+      run: if grep -q '"typecheck"' package.json; then yarn lint; fi
+
+    - name: Build
+      run: yarn build
