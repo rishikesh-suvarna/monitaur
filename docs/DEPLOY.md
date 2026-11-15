@@ -70,7 +70,13 @@ gh pr merge 5 --rebase && gh run watch          # backend deploy; health check m
 gh pr edit 6 --base main && gh pr merge 6 --rebase && gh run watch   # the v1 dashboard cannot talk to v2
 ```
 
-Then the monitoring additions PR (stacked on #6): retarget to `main` and merge the same way.
+Then the monitoring additions PR (stacked on #6; migrations 00003 to 00005, all additive): retarget to `main` and merge the same way. After it is live, merge the agent PR #7 (F6 and F9 payloads, gopsutil v4):
+
+```bash
+gh pr edit 7 --base main && gh pr merge 7 --rebase
+```
+
+#7 must land after the monitoring PR is deployed: a backend without it drops the new `processes` messages, and the release in step 5 should carry #7.
 
 Check:
 
@@ -83,7 +89,7 @@ Expected right after deploy: the seeded `host-unreachable` rule raises a critica
 
 ## 5. Agent release
 
-After #3 and #4 are on `main`:
+After #3, #4 and #7 are on `main`:
 
 ```bash
 git switch main && git pull

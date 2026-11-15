@@ -23,7 +23,8 @@ Full contract: `docs/platform-v2.md` (API shapes, package interfaces, schema).
 3. The agent dials `GET /agent/connect` with `Authorization: Bearer <token>` (v1 agents: `?token=`). `ingest.Hub` authenticates from the in-memory `directory` (no DB) and pushes the plan's minimum interval.
 4. Each sample goes to `metrics.Store` (rings + minute/hour rollups in memory) and `alerting.Engine` (rules evaluated server-side). Nothing is written per sample.
 5. Every `metrics.flush_interval` (30 min) the store writes closed rollups in one batch and runs the flush-window hooks (server last_seen batch, incident progress, retention). That is the only periodic DB traffic, so Neon can suspend between flushes.
-6. Incident transitions write immediately and dispatch to channels (`notify.Dispatcher`). The browser gets live data over SSE (`GET /api/v1/stream`, fetch-based so it can send the Authorization header); server snapshots every 3 s, incident events as they happen.
+6. Uptime checks (`checks.Scheduler`) probe http/tcp/tls targets from the backend; results stay in memory (24 h), hourly and daily rollups go out in the same flush window. Process lists (F9) live in memory only (`processes.Store`).
+7. Incident transitions write immediately and dispatch to channels (`notify.Dispatcher`), unless a maintenance window covers the server or check: then the incident is stored `silenced` and announced only if it is still firing when the window ends. The browser gets live data over SSE (`GET /api/v1/stream`, fetch-based so it can send the Authorization header); server snapshots every 3 s, incident events as they happen.
 
 Status: `critical` (critical incident open, incl. heartbeat "unreachable"), else `offline` (no socket and no sample for 2 min), else `warning`, else `healthy` (`api.status`).
 
@@ -47,6 +48,8 @@ backend/
   ingest/              agent WebSocket hub
   metrics/             B2 store: rings, rollups, journal, flush, Series
   alerting/            rules engine + incident state machine, Preview, DefaultRules
+  checks/              uptime checks: scheduler, SSRF-guarded probes, check incidents, rollups
+  processes/           latest top-process list per server (memory only)
   notify/              email/Slack/Discord/Telegram/webhook senders, SafeHTTPClient, Dispatcher
   store/               all SQL (pgx)
   limits/              token-bucket rate limiter, daily email budget
