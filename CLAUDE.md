@@ -9,21 +9,23 @@ Monitaur is a self-hosted server monitoring tool. Three deployables in one repo,
 | Dir | What | Stack |
 |---|---|---|
 | `agent/` | Binary installed on each monitored host. Collects CPU/mem/disk/net via gopsutil and streams JSON over WebSocket. | Go 1.24, gorilla/websocket, viper |
-| `backend/` | API + agent WebSocket hub. Persists metrics/alerts, sends SMTP alert emails. | Go 1.24, Gin, GORM, Postgres (Neon), Firebase Admin |
+| `backend/` | Multi-tenant API, agent WebSocket hub, in-memory metrics (B2), alert rules engine, notification channels, SSE, public status pages. | Go 1.24, Gin, pgx v5 + goose, Postgres (Neon), Firebase Admin |
 | `frontend/` | Dashboard SPA. | React 19 (JSX, not TS), Vite 7, Tailwind 3, TanStack Query 5, Recharts 3, Firebase Auth |
 
 Live deployment: backend runs as a systemd service (`monitaur-backend`) on an Ubuntu VM, frontend is a static build copied to the same VM, DB is Neon serverless Postgres.
 
 ## Data flow
 
-1. User signs in with Firebase on the frontend. Every API call sends `Authorization: Bearer <firebase id token>` (`frontend/src/config/api.js`).
-2. Backend `/api/v1/*` runs `AuthMiddleware` (verifies token) then `EnsureUserExists` (upserts the `users` row) on every request (`backend/auth/firebase.go`).
-3. User creates a server in the UI; backend generates a UUID token (`handlers/api.go:CreateServer`).
-4. Agent connects to `GET /agent/connect?token=...&server_name=...` and sends `{type: "metrics"|"alert", data}` every `collection_interval` seconds (default 5).
-5. Backend `handlers/websocket.go` keeps an in-memory `connections map[serverID]*AgentConnection`, inserts a `metrics` row per message, updates `servers.status` and `servers.last_seen`, and on `alert` inserts an `alerts` row and emails the server owner.
-6. Frontend polls REST endpoints with TanStack Query (`refetchInterval: 30000` on Dashboard and ServerDetail). There is no browser WebSocket.
+Full contract: `docs/platform-v2.md` (API shapes, package interfaces, schema).
 
-"Online" in the UI means "agent has an open socket on this backend process" (`IsAgentConnected`), not the DB `status` column.
+1. User signs in with Firebase. `auth.Service` verifies the ID token, gates unverified password accounts (`403 email_unverified`), and resolves user + personal org + role from caches (DB only on a cache miss). `X-Monitaur-Org` picks the org.
+2. Creating a server returns an `mt_live_...` token once; only its sha256 is stored.
+3. The agent dials `GET /agent/connect` with `Authorization: Bearer <token>` (v1 agents: `?token=`). `ingest.Hub` authenticates from the in-memory `directory` (no DB) and pushes the plan's minimum interval.
+4. Each sample goes to `metrics.Store` (rings + minute/hour rollups in memory) and `alerting.Engine` (rules evaluated server-side). Nothing is written per sample.
+5. Every `metrics.flush_interval` (30 min) the store writes closed rollups in one batch and runs the flush-window hooks (server last_seen batch, incident progress, retention). That is the only periodic DB traffic, so Neon can suspend between flushes.
+6. Incident transitions write immediately and dispatch to channels (`notify.Dispatcher`). The browser gets live data over SSE (`GET /api/v1/stream`, fetch-based so it can send the Authorization header); server snapshots every 3 s, incident events as they happen.
+
+Status: `critical` (critical incident open, incl. heartbeat "unreachable"), else `offline` (no socket and no sample for 2 min), else `warning`, else `healthy` (`api.status`).
 
 ## Layout
 
@@ -35,14 +37,21 @@ agent/
   config/config.go     config.json lookup: ./, /etc/monitaur/, ~/.monitaur/
   scripts/build.sh     cross-compile + package releases
 backend/
-  main.go              flags (-init, -migrate), router wiring
-  config/config.go     viper, reads ./config.yaml or env
-  database/postgres.go GORM connection, AutoMigrate, all queries
-  models/models.go     User, Server, Metric, Alert + agent wire types
-  auth/firebase.go     token verify + user upsert middleware
-  handlers/api.go      CRUD for servers/alerts/metrics
-  handlers/dashboard.go aggregated dashboard + chart endpoints
-  handlers/websocket.go agent hub, metric ingest, SMTP email
+  main.go              flags (-init, -migrate), server timeouts, graceful shutdown (final flush)
+  app/                 wiring, store<->alerting<->notify adapters, flush-window housekeeping, seeding, legacy backfill
+  api/                 Gin router + handlers per resource, SSE broker, public status page, error mapping
+  auth/                Firebase verifier, identity/role caches, org context, RequireRole
+  config/              viper + MONITAUR_* env overrides, Validate()
+  database/            pgx pool (Neon-tuned), goose Migrate(); migrations/*.sql
+  directory/           in-memory control plane (orgs, plans, servers by token hash, rules, channels, pins)
+  ingest/              agent WebSocket hub
+  metrics/             B2 store: rings, rollups, journal, flush, Series
+  alerting/            rules engine + incident state machine, Preview, DefaultRules
+  notify/              email/Slack/Discord/Telegram/webhook senders, SafeHTTPClient, Dispatcher
+  store/               all SQL (pgx)
+  limits/              token-bucket rate limiter, daily email budget
+  secrets/             AES-GCM box (channel configs), token generation and hashing
+  testdb/              per-test throwaway Postgres databases
 frontend/src/
   config/api.js        axios instance + auth interceptor
   apis/index.js        typed-ish endpoint wrappers
@@ -60,9 +69,11 @@ No Makefile and no root package.json. Run per directory.
 # backend
 cd backend
 go run . -init          # writes sample config.yaml (gitignored, holds secrets)
-go run . -migrate       # GORM AutoMigrate + optional Timescale hypertable, then exits
+go run . -migrate       # apply goose migrations and exit (serve also auto-migrates unless database.auto_migrate=false)
 go run .                # serve on server.host:server.port (default localhost:8080)
 go vet ./... && go build ./...
+# DB-backed tests need a Postgres where the user may CREATE DATABASE; they skip otherwise
+MONITAUR_TEST_DATABASE_URL="postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable" go test -race ./...
 
 # agent
 cd agent
@@ -82,22 +93,21 @@ Required env for the frontend: `VITE_APP_SERVER_URL`, `VITE_APP_SERVER_WS_URL` (
 
 ## Tests
 
-There are none yet in any of the three packages. When adding code:
-- Go: table-driven `_test.go` beside the file. Handlers are easiest to test with `httptest` + a Postgres test container, or by extracting the DB behind an interface first.
-- Frontend: no runner configured. Vitest is the natural fit for Vite if one is added.
+- Backend: table-driven unit tests per package; `store/` and `app/` tests use `testdb` (real Postgres, one database per test). `store/store_test.go` `TestMigrateLegacyDatabase` reproduces the v1 production schema and data; keep it passing for any migration change. `app/app_test.go` drives the fully wired app (fake Firebase verifier, real agent WebSocket, cross-tenant checks).
+- Agent: `agent/client` has lifecycle tests (`go test -race`).
+- New code ships with tests; cross-tenant access paths get a 404 assertion.
 
 ## Conventions and gotchas
 
 - **The DB is the bottleneck.** Neon free tier suspends compute after 5 min with no queries. Any change that adds per-message or per-request queries keeps it awake and burns CU-hours.
-- **Decided direction (2026-11-15, see `PLAN.md` sections 0, 2.3, 3), being rolled out:**
+- **Architecture decisions (2026-11-15, `PLAN.md` sections 0, 2.3, 3):**
   - **B2 write-behind:** metrics are buffered in memory and flushed to Neon every `metrics.flush_interval` (30 min). Never add a DB call on the agent ingest path or on a polled endpoint. Serve from the in-memory store or a cache, and put periodic DB work in the flush window. The backend must stay a single instance.
-  - **Multi-tenant:** tenants are organizations with plans and quotas. Every new table carries `org_id`, every handler authorizes through one helper (`requireServer` once it exists), and every cross-tenant path gets a test. Agent tokens are stored hashed; never return a stored token.
-- All SQL goes through `backend/database/postgres.go` except a few inline `h.db.DB.Where(...)` calls in handlers. Prefer adding a method on `*Database` over inline GORM in handlers. New schema goes in versioned SQL migrations (goose, `backend/database/migrations/`), not AutoMigrate.
-- Ownership checks: every `/servers/:id/*` and `/alerts/:id/*` handler must scope by owner (`user_id` today, `org_id` after the tenancy migration). Copy the existing `validateServerOwnership` pattern, do not skip it.
-- GORM logger is set to `Info` (logs every statement). Keep that in mind when reading prod logs.
-- Agent wire format is defined twice: `agent/metrics/collector.go` (sender) and `backend/models/models.go` `MetricData`/`AlertData` (receiver). Change both together and keep the backend tolerant of older agents.
+  - **Multi-tenant:** tenants are organizations with plans and quotas (`plans` table, 0 = unlimited). Every new table carries `org_id`, and every cross-tenant path gets a test. Agent tokens are stored hashed; never return a stored token.
+- All SQL lives in `backend/store`. New schema goes in a new goose migration under `backend/database/migrations/`; never edit an applied one. Migrations run at startup, so keep them fast (big data moves belong in an app job like `backfillLegacy`).
+- Tenant scoping: look servers up with `directory.OrgServer(orgID, id)` and pass `orgID` into every store method; a miss is a 404, never a 403. The directory must be updated (write-through) after every store write it caches.
+- Request logging is `api.requestLog` and never prints query strings (v1 agents send the token there). Do not switch back to `gin.Default()`.
+- Agent wire format is defined twice: `agent/metrics/collector.go` (sender) and `backend/ingest/hub.go` `metricData` (receiver). Change both together and keep the backend tolerant of older agents.
 - `backend/config.yaml`, `agent/config.json`, `frontend/.env*.local`, and Firebase service account JSON are gitignored and contain secrets. Never commit them; never print their values.
-- CI pins `go-version: '1.21'` while `go.mod` says `go 1.24`; it works only because of toolchain auto-download.
 - Deploys trigger on push to `main` (path-filtered). Work on a branch and open a PR.
 - Markdown and commit messages: no em dashes, no "Co-authored by Claude" trailer (user preference).
 
