@@ -32,6 +32,7 @@ type Config struct {
 	Limits   LimitsConfig   `mapstructure:"limits"`
 	Secrets  SecretsConfig  `mapstructure:"secrets"`
 	Notify   NotifyConfig   `mapstructure:"notify"`
+	Checks   ChecksConfig   `mapstructure:"checks"`
 	Log      LogConfig      `mapstructure:"log"`
 }
 
@@ -141,6 +142,13 @@ type NotifyConfig struct {
 	AllowPrivateWebhooks bool `mapstructure:"allow_private_webhooks"`
 }
 
+type ChecksConfig struct {
+	// AllowPrivateTargets lets uptime checks probe loopback, private and
+	// link-local addresses. Only for single-tenant self-hosting; with public
+	// sign-up it lets tenants scan the backend's network.
+	AllowPrivateTargets bool `mapstructure:"allow_private_targets"`
+}
+
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"` // "json" or "text"
@@ -167,6 +175,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("metrics.recent_window", defaultRecentWindow)
 	v.SetDefault("metrics.journal_dir", "/var/lib/monitaur/journal")
 	v.SetDefault("limits.default_plan", "free")
+	v.SetDefault("checks.allow_private_targets", false)
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 }

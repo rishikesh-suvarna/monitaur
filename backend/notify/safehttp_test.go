@@ -125,8 +125,8 @@ func TestSafeHTTPClientRedirectLimit(t *testing.T) {
 		wantErr bool
 	}{
 		{0, false},
-		{maxRedirects, false},
-		{maxRedirects + 1, true},
+		{MaxRedirects, false},
+		{MaxRedirects + 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(strconv.Itoa(tt.hops), func(t *testing.T) {
