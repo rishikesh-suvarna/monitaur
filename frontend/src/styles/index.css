@@ -1,0 +1,188 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background: rgb(var(--bg));
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: rgb(var(--bg));
+    color: rgb(var(--tx));
+    font-family: theme(fontFamily.sans);
+    font-size: 14px;
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Design: plain links are accent and underlined; row and nav links opt out
+     with no-underline (the design's .ln). Element-level specificity beats
+     preflight's `a { color: inherit }` but loses to any utility class. */
+  a {
+    color: rgb(var(--ac));
+    text-decoration-line: underline;
+  }
+
+  a:where(:hover) {
+    color: rgb(var(--tx));
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--ac));
+    outline-offset: 2px;
+  }
+
+  kbd {
+    font-family: theme(fontFamily.mono);
+    font-size: 11px;
+    line-height: 16px;
+    padding: 1px 5px;
+    border: 1px solid rgb(var(--bd2));
+    border-radius: 4px;
+    color: rgb(var(--tx2));
+    background: rgb(var(--s2));
+  }
+}
+
+@layer components {
+  /* Caption 12/16 500 caps */
+  .cap {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgb(var(--tx3));
+  }
+
+  .skel {
+    display: block;
+    background: rgb(var(--s3));
+    border-radius: 4px;
+    animation: mt-shim 1.6s ease-in-out infinite;
+  }
+
+  .pulse {
+    animation: mt-pulse 1.8s ease-out infinite;
+  }
+
+  /* The design's select caret: two 5 px gradient triangles. */
+  .select-caret {
+    background-image:
+      linear-gradient(45deg, transparent 50%, rgb(var(--tx2)) 50%),
+      linear-gradient(135deg, rgb(var(--tx2)) 50%, transparent 50%);
+    background-position:
+      calc(100% - 16px) calc(50% - 3px),
+      calc(100% - 11px) calc(50% - 3px);
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+  }
+
+  /* Loader: the Watcher eye glances left, right, then blinks (3.2 s loop). */
+  .mt-lid {
+    transform-origin: 24px 24px;
+    animation: mt-blink 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .mt-pupil {
+    transform-origin: 24px 24px;
+    animation: mt-look 3.2s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+
+  /* A digit that just changed slides in and fades over 400 ms. */
+  .tick-in {
+    display: inline-block;
+    animation: mt-tick-in 400ms ease-out;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes mt-shim {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes mt-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+
+@keyframes mt-blink {
+  0%,
+  70%,
+  100% {
+    transform: scaleY(1);
+  }
+  74% {
+    transform: scaleY(0.06);
+  }
+  79% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes mt-look {
+  0%,
+  12% {
+    transform: translateX(0) scaleX(1);
+  }
+  24%,
+  34% {
+    transform: translateX(-4px) scaleX(0.85);
+  }
+  46%,
+  56% {
+    transform: translateX(4px) scaleX(0.85);
+  }
+  66%,
+  100% {
+    transform: translateX(0) scaleX(1);
+  }
+}
+
+@keyframes mt-tick-in {
+  from {
+    transform: translateY(-40%);
+    opacity: 0.3;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Reduced motion for the loader: the pupil holds still and the blink snaps. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .mt-lid {
+    animation-timing-function: steps(1);
+  }
+}
+
+:root[data-motion='reduce'] .mt-lid {
+  animation-timing-function: steps(1);
+}

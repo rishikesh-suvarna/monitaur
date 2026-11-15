@@ -1,31 +1,48 @@
 <!doctype html>
-<html lang="en">
-
-<head>
-  <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Monitaur - Server Monitoring Tool</title>
-  <meta name="description"
-    content="Monitaur is a powerful server monitoring tool that helps you track server health, uptime, and performance. Monitor your infrastructure with ease and reliability.">
-  <meta name="keywords"
-    content="Monitaur, server monitoring, uptime, performance, infrastructure, monitoring tool, server health, Monitor, Dinosaur">
-  <meta name="author" content="Monitaur">
-  <meta property="og:title" content="Monitaur - Server Monitoring Tool">
-  <meta property="og:description"
-    content="Monitor your servers like a dinosaur! Monitaur combines robust monitoring features with real-time insights for your infrastructure.">
-  <meta property="og:type" content="website">
-  <meta property="og:image" content="/icon.svg">
-  <meta property="og:url" content="https://monitaur.rishikeshsuvarna.com/">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Monitaur - Server Monitoring Tool">
-  <meta name="twitter:description" content="Track server health, uptime, and performance with Monitaur.">
-  <meta name="twitter:image" content="/icon.svg">
-</head>
-
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
-</body>
-
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Monitaur</title>
+    <meta
+      name="description"
+      content="Monitaur is a self-hosted server monitoring tool. Watch CPU, memory, disk and network live, and get alerted when a server needs you."
+    />
+    <meta property="og:title" content="Monitaur" />
+    <meta property="og:description" content="Self-hosted server monitoring and alerting." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+    />
+    <script>
+      // Apply the saved theme and motion preference before first paint so
+      // there is no flash. Keys and values mirror src/providers/ThemeProvider.tsx
+      // and src/providers/MotionProvider.tsx.
+      (function () {
+        var root = document.documentElement;
+        try {
+          var theme = JSON.parse(localStorage.getItem('monitaur:theme') || '"dark"');
+          if (theme === 'system') {
+            theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          }
+          root.dataset.theme = theme === 'light' ? 'light' : 'dark';
+          var motion = JSON.parse(localStorage.getItem('monitaur:reduce-motion') || 'null');
+          if (motion === true) root.dataset.motion = 'reduce';
+          if (motion === false) root.dataset.motion = 'full';
+        } catch (e) {
+          root.dataset.theme = 'dark';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

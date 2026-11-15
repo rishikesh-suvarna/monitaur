@@ -1,0 +1,88 @@
+/* Design tokens from Tokens.dc.html. Channels so Tailwind alpha works:
+   colours are `rgb(var(--token) / <alpha>)`. Dark is the default theme. */
+:root,
+[data-theme='dark'] {
+  --bg: 11 14 17;
+  --s1: 18 22 27;
+  --s2: 24 29 35;
+  --s3: 31 37 44;
+  --bd: 36 43 51;
+  --bd2: 50 59 69;
+  --tx: 231 235 239;
+  --tx2: 163 173 184;
+  --tx3: 125 135 146;
+  --ac: 155 140 255;
+  --ac-ink: 11 14 17;
+  --ok: 63 214 143;
+  --warn: 246 190 79;
+  --crit: 255 107 107;
+  --off: 140 150 162;
+  --s-in: 155 140 255;
+  --s-out: 92 194 242;
+  --shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+
+  /* Tints and scrim, as channels plus alpha (the design's ac-soft, *-bg, scrim). */
+  --ac-soft: 155 140 255 / 0.14;
+  --ok-bg: 63 214 143 / 0.12;
+  --warn-bg: 246 190 79 / 0.13;
+  --crit-bg: 255 107 107 / 0.13;
+  --off-bg: 140 150 162 / 0.14;
+  --scrim: 5 7 9 / 0.72;
+
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg: 245 246 248;
+  --s1: 255 255 255;
+  --s2: 243 245 247;
+  --s3: 233 237 241;
+  --bd: 225 229 234;
+  --bd2: 205 211 218;
+  --tx: 17 21 26;
+  --tx2: 79 89 101;
+  --tx3: 102 112 123;
+  --ac: 84 66 214;
+  --ac-ink: 255 255 255;
+  --ok: 11 127 85;
+  --warn: 154 91 0;
+  --crit: 201 44 44;
+  --off: 102 112 123;
+  --s-in: 84 66 214;
+  --s-out: 10 132 198;
+  --shadow: 0 16px 48px rgb(17 21 26 / 0.16);
+
+  --ac-soft: 84 66 214 / 0.1;
+  --ok-bg: 11 127 85 / 0.1;
+  --warn-bg: 214 140 20 / 0.14;
+  --crit-bg: 201 44 44 / 0.1;
+  --off-bg: 102 112 123 / 0.12;
+  --scrim: 17 21 26 / 0.4;
+
+  color-scheme: light;
+}
+
+.num {
+  font-family: theme(fontFamily.mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* Reduced motion follows the OS unless the user chose "full" motion in
+   Settings (data-motion="full"); data-motion="reduce" forces it on.
+   Elements marked data-motion-steps (the loader eyelid) keep a stepped
+   animation instead of none, as specified in Loader.dc.html. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) *:not([data-motion-steps]),
+  :root:not([data-motion='full']) ::before,
+  :root:not([data-motion='full']) ::after {
+    transition-duration: 1ms !important;
+    animation: none !important;
+  }
+}
+
+:root[data-motion='reduce'] *:not([data-motion-steps]),
+:root[data-motion='reduce'] ::before,
+:root[data-motion='reduce'] ::after {
+  transition-duration: 1ms !important;
+  animation: none !important;
+}
