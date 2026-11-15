@@ -82,6 +82,9 @@ type liveJSON struct {
 	Connected bool        `json:"connected"`
 	LastSeen  *time.Time  `json:"last_seen"`
 	Latest    *latestJSON `json:"latest"`
+	// Agents report their version on connect, which can happen after the
+	// client cached the server list.
+	AgentVersion string `json:"agent_version"`
 }
 
 func toLatestJSON(l metrics.Latest) *latestJSON {
@@ -158,7 +161,7 @@ func (a *API) liveServers(orgID int64) []liveJSON {
 	out := make([]liveJSON, 0, len(servers))
 	for _, s := range servers {
 		status, connected, latest := a.status(s.ID)
-		l := liveJSON{ID: s.ID, Status: status, Connected: connected, LastSeen: a.lastSeen(s, latest)}
+		l := liveJSON{ID: s.ID, Status: status, Connected: connected, LastSeen: a.lastSeen(s, latest), AgentVersion: s.AgentVersion}
 		if latest != nil {
 			l.Latest = toLatestJSON(*latest)
 		}
