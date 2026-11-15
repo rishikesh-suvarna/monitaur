@@ -111,7 +111,7 @@ describe('rule sentences', () => {
     expect(ruleTitle(rule())).toBe('CPU > 85% for 5 min → warning');
     expect(ruleTitle(rule({ metric: 'net_in', threshold: 100 * BYTES_PER_MB, for_seconds: 600 }))).toBe('Network in > 100 MB/s for 10 min → warning');
     expect(ruleTitle(rule({ metric: 'disk', comparison: 'below', threshold: 5, severity: 'critical', for_seconds: 60 }))).toBe(
-      'Disk < 5% for 1 min → critical',
+      'Disk / < 5% for 1 min → critical',
     );
   });
 

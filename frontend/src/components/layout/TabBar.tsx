@@ -28,7 +28,7 @@ export function TabBar() {
             to={item.to}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'relative flex min-h-[52px] flex-col items-center justify-center gap-1 text-[11px] no-underline',
+              'relative flex min-h-[55px] flex-col items-center justify-center gap-1 text-[11px] no-underline',
               active ? 'font-semibold text-accent hover:text-accent' : 'font-medium text-ink-muted hover:text-ink',
             )}
           >

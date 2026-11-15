@@ -47,7 +47,7 @@ export default function ServerDetailPage() {
   return (
     <>
       <ServerHeader server={server} tab={tab} desktop={desktop} />
-      <PageBody className={desktop ? 'gap-5 md:pt-5' : 'gap-3.5 pt-3.5'}>
+      <PageBody gap={desktop ? 'gap-5' : 'gap-3.5'} padding={desktop ? 'px-8 pb-12 pt-5' : 'p-3'}>
         {detail.isError && (
           <ErrorState error={detail.error} staleSince={detail.dataUpdatedAt} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
         )}

@@ -10,6 +10,7 @@ import { CardSkeleton } from '../../components/Skeletons';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useToast } from '../../components/toastContext';
 import { useAckIncident } from '../../hooks/api/incidents';
+import { cn } from '../../lib/cn';
 import { useOrg } from '../../providers/OrgProvider';
 
 const DESKTOP_LIMIT = 6;
@@ -48,7 +49,7 @@ export function IncidentRail({ incidents, resolved24h, loading, error, onRetry, 
       <div className="flex items-baseline justify-between">
         <h2 id="incidents-heading" className={compact ? 'm-0 text-[15px] font-semibold' : 'm-0 text-h3 font-semibold'}>
           Active incidents{' '}
-          {!loading && <span className="num font-medium text-ink-faint">{incidents.length}</span>}
+          {!loading && <span className={cn('num text-ink-faint', !compact && 'font-medium')}>{incidents.length}</span>}
         </h2>
         <Link to="/alerts" className="text-[13px]">
           {compact ? 'See all' : 'All alerts'}

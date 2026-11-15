@@ -45,7 +45,7 @@ export function Select<T extends string | number>({
   return (
     <HeadlessField
       disabled={disabled}
-      className={cn(inlineLabel ? 'flex items-center gap-2' : 'flex flex-col gap-1.5', className)}
+      className={cn(inlineLabel ? 'flex items-center gap-3' : 'flex flex-col gap-1.5', className)}
     >
       <Label className={cn(inlineLabel ? 'text-[12px] text-ink-faint' : labelClasses, hideLabel && 'sr-only')}>{label}</Label>
       <Listbox value={value} onChange={onChange} disabled={disabled}>

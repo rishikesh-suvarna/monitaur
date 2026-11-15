@@ -29,7 +29,7 @@ export function UserMenu({ collapsed }: { collapsed: boolean }) {
     <Menu>
       <MenuButton
         aria-label={collapsed ? `Account: ${name}` : undefined}
-        className="flex w-full items-center gap-2.5 rounded px-1.5 py-1 text-left hover:bg-surface-2"
+        className="flex w-full items-center gap-2.5 rounded px-1.5 text-left hover:bg-surface-2"
       >
         <span
           aria-hidden="true"
@@ -40,8 +40,8 @@ export function UserMenu({ collapsed }: { collapsed: boolean }) {
         {!collapsed && (
           <>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-[13px] font-medium text-ink">{name}</span>
-              <span className="truncate text-[12px] text-ink-faint">{subtitle}</span>
+              <span className="truncate text-[13px] font-medium leading-4 text-ink">{name}</span>
+              <span className="truncate text-[12px] leading-4 text-ink-faint">{subtitle}</span>
             </span>
             <ChevronUpDownIcon className="h-4 w-4 flex-none text-ink-faint" strokeWidth={1.8} aria-hidden="true" />
           </>

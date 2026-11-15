@@ -127,7 +127,7 @@ function StatusContent({ data, refreshFailed }: { data: PublicStatusResponse; re
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <h1 className="m-0 text-[22px] font-semibold leading-7">{heading}</h1>
-          <span className="text-[13px] text-ink-muted">Live health of our services</span>
+          <span className="text-[13px] text-ink-muted">Live health of our public services</span>
         </div>
       </header>
 

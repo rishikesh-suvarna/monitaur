@@ -137,7 +137,7 @@ export default function ChecksPage() {
   return (
     <>
       {header}
-      <PageBody className={desktop ? undefined : 'gap-4'}>
+      <PageBody gap={desktop ? undefined : 'gap-4'}>
         {checks.isError && checks.data && (
           <ErrorState
             variant="widget"

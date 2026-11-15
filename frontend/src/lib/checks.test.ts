@@ -94,7 +94,7 @@ describe('check incidents', () => {
     expect(isCheckMetric('tls_expiry')).toBe(true);
     expect(isCheckMetric('cpu')).toBe(false);
     expect(metricLabel('tcp')).toBe('TCP check');
-    expect(metricLabel('disk')).toBe('Disk');
+    expect(metricLabel('disk')).toBe('Disk /');
   });
 
   it('reads a failing check as Down and a certificate by its severity', () => {

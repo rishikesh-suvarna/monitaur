@@ -36,7 +36,7 @@ export const ServerCard = memo(function ServerCard({ server, breaches, variant =
       <article
         className={cn('relative flex flex-col gap-2 rounded-lg border border-line bg-surface-1 p-3', stale && 'opacity-60')}
       >
-        <div className="flex min-w-0 items-center gap-2 text-[14px]">
+        <div className="flex min-w-0 items-center gap-2 text-[14px] leading-[17px]">
           <StatusBadge status={server.status} variant="icon" />
           {name}
           {server.maintenance && <MaintenanceBadge />}
@@ -49,7 +49,7 @@ export const ServerCard = memo(function ServerCard({ server, breaches, variant =
                 <span className="cap text-[11px]">{cell.label}</span>
                 <TickingNumber
                   value={cell.display}
-                  className={cn('text-[13px]', VALUE_TONE_CLASS[cell.tone], cell.over ? 'font-semibold' : 'font-normal')}
+                  className={cn('text-[13px] leading-4', VALUE_TONE_CLASS[cell.tone], cell.over ? 'font-semibold' : 'font-normal')}
                 />
               </div>
               <Sparkline values={cell.values} height={16} fluid tone={cell.tone} dashed={stale} />
@@ -68,7 +68,7 @@ export const ServerCard = memo(function ServerCard({ server, breaches, variant =
         stale && 'opacity-[0.55]',
       )}
     >
-      <div className="flex min-w-0 items-center gap-2 text-[13px]">
+      <div className="flex min-w-0 items-center gap-2 text-[13px] leading-4">
         <StatusBadge status={server.status} variant="icon" />
         {name}
         {server.maintenance && <MaintenanceBadge />}
@@ -90,8 +90,8 @@ export const ServerCard = memo(function ServerCard({ server, breaches, variant =
           />
         </div>
       ))}
-      <div className="num flex justify-between border-t border-line pt-2 text-[12px] text-ink-faint">
-        <RelativeTime value={server.last_seen} className={stale ? 'text-warn' : undefined} />
+      <div className="num flex justify-between border-t border-line pt-2 text-[12px] leading-4 text-ink-faint">
+        <RelativeTime value={server.last_seen} className={stale ? 'text-warn' : 'text-ink-muted'} />
         <span>up {server.latest && !stale ? formatDuration(server.latest.uptime_s) : EMPTY_VALUE}</span>
       </div>
     </article>

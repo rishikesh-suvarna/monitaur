@@ -19,14 +19,31 @@ export function incidentPeak(incident: Incident, now: number): string {
   return formatMetricValue(incident.peak, incident.unit);
 }
 
+/** Below this a heartbeat timeout reads in seconds ("60s", as in Alerts.dc.html), above it as a duration. */
+const SILENT_SECONDS_MAX = 120;
+
 export function incidentThreshold(incident: Incident): string | null {
   if (incident.metric === 'tls_expiry') return `${Math.floor(incident.threshold)} d`;
-  return incident.metric === 'heartbeat' || isCheckMetric(incident.metric) ? null : formatThreshold(incident.threshold, incident.unit);
+  // Heartbeat incidents carry the rule's timeout in seconds as their threshold.
+  if (incident.metric === 'heartbeat') {
+    return incident.threshold < SILENT_SECONDS_MAX ? `${Math.round(incident.threshold)}s` : formatDuration(incident.threshold, 1);
+  }
+  return isCheckMetric(incident.metric) ? null : formatThreshold(incident.threshold, incident.unit);
 }
 
-/** Whether a peak-against-threshold meter means anything (not for heartbeats or uptime checks). */
+/** Whether a peak-against-threshold meter means anything (not for uptime checks, whose peak is a failure count). */
 export function hasValueMeter(incident: Pick<Incident, 'metric'>): boolean {
-  return incident.metric !== 'heartbeat' && !isCheckMetric(incident.metric);
+  return !isCheckMetric(incident.metric);
+}
+
+/**
+ * The value the meter draws. A heartbeat's stored peak only moves at each
+ * flush, so an open one uses how long it has been silent so far (its
+ * started_at is the last heartbeat).
+ */
+export function meterValue(incident: Incident, now: number): number {
+  if (incident.metric !== 'heartbeat') return incident.peak;
+  return Math.max(incident.peak, incidentDurationSeconds(incident, now));
 }
 
 /** What the incident is about: the server, or the uptime check (F7). */

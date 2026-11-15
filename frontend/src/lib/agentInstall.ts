@@ -5,6 +5,9 @@
  */
 import type { CreateServerResponse } from '../api/types';
 
+/** README section that installs or upgrades the agent (re-running the installer upgrades in place). */
+export const AGENT_UPDATE_URL = 'https://github.com/rishikesh-suvarna/monitaur#install-agent-ubuntudebian';
+
 export const AGENT_INSTALL_COMMAND =
   'curl -sSL https://raw.githubusercontent.com/rishikesh-suvarna/monitaur/main/install.sh | sudo bash';
 export const AGENT_CONFIG_PATH = '/etc/monitaur/config.json';

@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { makeIncident } from '../test/fixtures';
 
-import { incidentDurationLabel, incidentDurationSeconds, incidentPeak, nextNotifyLabel, resolvedHowLabel } from './incidents';
+import {
+  hasValueMeter,
+  incidentDurationLabel,
+  incidentDurationSeconds,
+  incidentPeak,
+  incidentThreshold,
+  meterValue,
+  nextNotifyLabel,
+  resolvedHowLabel,
+} from './incidents';
 
 const NOW = Date.parse('2026-11-15T14:27:00Z');
 
@@ -31,6 +40,16 @@ describe('incident duration', () => {
   it('reads a heartbeat peak as silence', () => {
     const heartbeat = makeIncident({ id: 3, server_id: 1, metric: 'heartbeat', unit: '', started_at: '2026-11-15T14:15:00Z' });
     expect(incidentPeak(heartbeat, NOW)).toBe('12m silent');
+  });
+
+  it('meters a heartbeat against its timeout, like the design', () => {
+    const heartbeat = makeIncident({ id: 3, server_id: 1, metric: 'heartbeat', unit: '', threshold: 60, peak: 90, started_at: '2026-11-15T14:15:00Z' });
+    expect(incidentThreshold(heartbeat)).toBe('60s');
+    expect(incidentThreshold({ ...heartbeat, threshold: 300 })).toBe('5m');
+    expect(hasValueMeter(heartbeat)).toBe(true);
+    // The stored peak lags until the next flush; the live silence (12 min) wins.
+    expect(meterValue(heartbeat, NOW)).toBe(720);
+    expect(hasValueMeter({ metric: 'tcp' })).toBe(false);
   });
 });
 

@@ -427,7 +427,7 @@ export default function OnboardingPage() {
                       [
                         ['CPU', current?.latest?.cpu],
                         ['Memory', current?.latest?.mem],
-                        ['Disk', current?.latest?.disk],
+                        ['Disk /', current?.latest?.disk],
                       ] as const
                     ).map(([label, value]) => (
                       <div key={label} className="flex flex-col gap-1 rounded-lg bg-surface-2 p-3">

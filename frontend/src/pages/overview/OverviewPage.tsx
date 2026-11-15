@@ -71,6 +71,7 @@ export default function OverviewPage() {
 
   const header = (
     <PageHeader
+      brand
       title="Overview"
       description={servers.data ? <LiveIndicator serverCount={list.length} fallbackUpdatedAt={servers.dataUpdatedAt} /> : undefined}
       actions={
@@ -200,7 +201,7 @@ export default function OverviewPage() {
     return (
       <>
         {header}
-        <PageBody className="gap-4">
+        <PageBody gap="gap-4">
           {staleBanner}
           {allHealthy ? (
             <HealthyCard total={counts.all} lastResolved={lastResolved.data?.incidents[0] ?? null} updatedAt={live.lastServersAt ?? servers.dataUpdatedAt} compact />

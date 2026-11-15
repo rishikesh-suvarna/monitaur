@@ -209,7 +209,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
                 className={cn('flex h-10 cursor-pointer items-center gap-2.5 rounded px-2.5 text-ink', selected && 'bg-surface-3')}
               >
                 {item.status ? <StatusBadge status={item.status} variant="icon" /> : item.icon}
-                <span className="truncate font-medium">{item.label}</span>
+                <span className={cn('truncate', item.status && 'font-medium')}>{item.label}</span>
                 {item.sub && <span className="num truncate text-[12px] text-ink-faint">{item.sub}</span>}
                 <span className="flex-1" />
                 {item.keys?.map((key) => <Kbd key={key}>{key}</Kbd>)}

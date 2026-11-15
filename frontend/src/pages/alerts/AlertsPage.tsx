@@ -101,17 +101,16 @@ function stateOptions(counts: IncidentCounts | undefined): SegmentOption<HeaderT
 function NoMatch({ onClear }: { onClear: () => void }) {
   return (
     <EmptyState
-      variant="plain"
+      variant="inset"
+      compact
       mood="sleep"
       dinoSize={96}
       title="Nothing matches these filters"
-      description="Try another severity, type or server."
       action={
         <Button size="sm" onClick={onClear}>
           Clear filters
         </Button>
       }
-      className="py-8"
     />
   );
 }

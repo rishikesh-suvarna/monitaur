@@ -44,10 +44,10 @@ function NoMatches({ query, onClear }: { query: string; onClear: () => void }) {
   return (
     <EmptyState
       variant="plain"
+      compact
       mood="lost"
       dinoSize={96}
       title={query.trim() === '' ? 'No servers match these filters' : `No servers match “${query.trim()}”`}
-      description="Try another name or clear the tag filter."
       action={
         <Button size="sm" onClick={onClear}>
           Clear filters

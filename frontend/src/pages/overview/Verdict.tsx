@@ -40,7 +40,8 @@ export function StatusTiles({ counts, selected, onSelect, compact = false }: Sta
     >
       {keys.map((key) => {
         const pressed = key === 'all' ? selected === null : selected === key;
-        const hot = key === 'critical' && counts.critical > 0;
+        // Mobile tiles stay plain cards (OverviewMobile board); only desktop tints a critical count.
+        const hot = !compact && key === 'critical' && counts.critical > 0;
         return (
           <button
             key={key}
@@ -59,14 +60,14 @@ export function StatusTiles({ counts, selected, onSelect, compact = false }: Sta
             <span
               className={cn(
                 'inline-flex items-center font-medium',
-                compact ? 'gap-1 text-[11px]' : 'gap-1.5 text-[12px]',
+                compact ? 'gap-1 text-[11px] leading-[14px]' : 'gap-1.5 text-[12px] leading-4',
                 key === 'all' ? 'text-ink-muted' : statusTextClass(key),
               )}
             >
               {key !== 'all' && <StatusIcon status={key} size={12} />}
               {compact ? TILE_LABELS[key].short : TILE_LABELS[key].full}
             </span>
-            <span className={cn('num font-medium', compact ? 'text-[20px] leading-7' : 'text-[24px] leading-7')}>{counts[key]}</span>
+            <span className={cn('num font-medium', compact ? 'text-[20px] leading-6' : 'text-[24px] leading-7')}>{counts[key]}</span>
           </button>
         );
       })}
@@ -157,7 +158,7 @@ export function VerdictLine({ servers, incidents, compact = false }: VerdictLine
           {secondary && <span className="font-medium text-ink-muted">, {secondary}</span>}
         </h2>
         {verdict.worst && (
-          <Link to={`/servers/${verdict.worst.id}`} className="truncate text-[13px] text-ink-muted no-underline hover:text-ink">
+          <Link to={`/servers/${verdict.worst.id}`} className="truncate text-[13px] leading-4 text-ink-muted no-underline hover:text-ink">
             <ReasonLine verdict={verdict} compact={false} /> →
           </Link>
         )}

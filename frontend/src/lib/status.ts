@@ -38,7 +38,7 @@ export function worstStatus(statuses: Iterable<ServerStatus>): ServerStatus | nu
 export const METRIC_LABELS: Record<MetricKey, string> = {
   cpu: 'CPU',
   memory: 'Memory',
-  disk: 'Disk',
+  disk: 'Disk /',
   net_in: 'Network in',
   net_out: 'Network out',
   heartbeat: 'Heartbeat',

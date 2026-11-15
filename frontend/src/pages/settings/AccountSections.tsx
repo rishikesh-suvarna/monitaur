@@ -100,7 +100,8 @@ function ThemePreview({ value }: { value: ThemePreference }) {
     <span data-theme={theme} className={cn('flex flex-col gap-1 bg-bg p-2', className)}>
       <span className="h-1.5 w-3/5 rounded-[2px] bg-line-strong" />
       <span className="h-1.5 w-2/5 rounded-[2px] bg-line-strong" />
-      <span className="h-1.5 w-3.5 rounded-[2px] bg-ok" />
+      {/* The design keeps this bar the dark theme's green in every tile. */}
+      <span data-theme="dark" className="h-1.5 w-3.5 rounded-[2px] bg-ok" />
     </span>
   );
   return (
@@ -108,7 +109,7 @@ function ThemePreview({ value }: { value: ThemePreference }) {
       {value === 'system' ? (
         <>
           {pane('dark', 'flex-1')}
-          {pane('light', 'flex-[0.6]')}
+          <span data-theme="light" className="flex-[0.6] bg-bg" />
         </>
       ) : (
         pane(value, 'flex-1')

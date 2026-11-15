@@ -31,7 +31,8 @@ export function Toggle({
 }: ToggleProps) {
   const text = (
     <span className={cn('flex min-w-0 flex-col gap-0.5', labelPosition === 'before' && 'flex-1', hideLabel && 'sr-only')}>
-      <Label className="text-[13px] font-medium text-ink">{label}</Label>
+      {/* Settings rows (label before) use the 500 label weight; inline switches read as body text. */}
+      <Label className={cn('text-[13px] text-ink', labelPosition === 'before' ? 'font-medium' : 'font-normal')}>{label}</Label>
       {description && <Description className={hintClasses}>{description}</Description>}
     </span>
   );

@@ -13,6 +13,7 @@ import {
   incidentPeak,
   incidentSubject,
   incidentThreshold,
+  meterValue,
   resolvedHowLabel,
   type IncidentSubject,
 } from '../lib/incidents';
@@ -28,6 +29,7 @@ const BAR_CLASS = { crit: 'bg-crit', warn: 'bg-warn', off: 'bg-off', resolved: '
 const LEFT_BORDER = { crit: 'border-l-crit', warn: 'border-l-warn', off: 'border-l-off', resolved: 'border-l-line-strong' } as const;
 const PEAK_TEXT_CLASS = { crit: 'text-crit', warn: 'text-warn', off: 'text-off', resolved: 'text-ink-muted' } as const;
 const PERCENT_SCALE = 100;
+const UNREACHABLE_TITLE = 'Server unreachable';
 const RATE_HEADROOM = 1.2;
 
 /** The server or uptime check an incident belongs to, as a link (plain text when the id is unknown). */
@@ -100,9 +102,11 @@ export function IncidentRow({
   const look = presentIncident(incident);
   const open = incident.state !== 'resolved';
   const threshold = incidentThreshold(incident);
-  const scale =
-    incident.unit === '%' ? PERCENT_SCALE : Math.max(incident.peak, incident.threshold) * RATE_HEADROOM || PERCENT_SCALE;
+  const value = meterValue(incident, now);
+  const scale = incident.unit === '%' ? PERCENT_SCALE : Math.max(value, incident.threshold) * RATE_HEADROOM || PERCENT_SCALE;
   const meter = hasValueMeter(incident);
+  // Alert rows name a lost heartbeat by its effect (Alerts.dc.html); the overview rail keeps "No heartbeat".
+  const title = incident.metric === 'heartbeat' ? UNREACHABLE_TITLE : incidentTitle(incident);
   const lasted = formatDuration(incidentDurationSeconds(incident, now));
   const actionTitle = canAct ? undefined : disabledReason;
   const subject = incidentSubject(incident);
@@ -119,17 +123,14 @@ export function IncidentRow({
         <div className="flex min-w-0 flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={look.status} size="sm" text={look.label} />
-            <span className="font-semibold">{incidentTitle(incident)}</span>
+            <span className="font-semibold">{title}</span>
             {incident.state === 'acked' && <Chip>{ackedLabel(incident)}</Chip>}
             {incident.silenced && <SilencedChip />}
           </div>
           <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 text-[12px] text-ink-muted">
             <SubjectLink subject={subject} className="font-medium" />
             <span className="num">started {formatDayTime(incident.started_at, now)}</span>
-            <span className="num">
-              lasted {lasted}
-              {open ? ' (open)' : ''}
-            </span>
+            <span className="num">lasted {lasted}</span>
             {incident.notified_channels.length > 0 && <span>notified {incident.notified_channels.join(', ')}</span>}
           </div>
         </div>
@@ -142,7 +143,7 @@ export function IncidentRow({
             <div aria-hidden="true" className="relative h-1.5 rounded-[3px] bg-surface-3">
               <span
                 className={cn('absolute inset-y-0 left-0 rounded-[3px]', open ? BAR_CLASS[look.bar] : 'bg-ink-muted')}
-                style={{ width: `${Math.min(100, (incident.peak / scale) * 100)}%` }}
+                style={{ width: `${Math.min(100, (value / scale) * 100)}%` }}
               />
               <span
                 className="absolute -bottom-[3px] -top-[3px] border-l-2 border-ink"
@@ -228,8 +229,8 @@ export function IncidentCard({
     return (
       <div className={cn('flex items-center gap-2.5 rounded-lg border border-l-[3px] border-line bg-surface-1 px-3 py-2.5', LEFT_BORDER[look.bar])}>
         <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-          <span className="text-[13px] font-semibold">{incidentTitle(incident)}</span>
-          <span className="truncate text-[12px] text-ink-muted">
+          <span className="text-[13px] font-semibold leading-4">{incidentTitle(incident)}</span>
+          <span className="truncate text-[12px] leading-4 text-ink-muted">
             <SubjectLink subject={subject} className="text-ink-muted no-underline hover:text-ink" /> · <span className="num">{duration}</span>
             {incident.silenced && <span> · silenced</span>}
           </span>
@@ -246,8 +247,8 @@ export function IncidentCard({
         {incident.silenced && <SilencedChip />}
         <span className="num ml-auto text-[12px] text-ink-faint">{duration}</span>
       </div>
-      <div className="text-[13px] font-semibold">{incidentTitle(incident)}</div>
-      <SubjectLink subject={subject} className="truncate text-[13px] text-ink-muted no-underline hover:text-ink" />
+      <div className="text-[13px] font-semibold leading-4">{incidentTitle(incident)}</div>
+      <SubjectLink subject={subject} className="truncate text-[13px] leading-4 text-ink-muted no-underline hover:text-ink" />
       <div className="flex items-center gap-2">
         <span className="num flex-1 text-[12px] text-ink-muted">
           peak <span className="text-ink">{incidentPeak(incident, now)}</span>

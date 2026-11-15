@@ -30,7 +30,7 @@ describe('presentIncident (badge shape, word and bar)', () => {
 
 describe('incidentTitle', () => {
   it('reads like the design: metric, comparison, threshold', () => {
-    expect(incidentTitle({ metric: 'disk', threshold: 90, peak: 94.6, unit: '%' })).toBe('Disk above 90%');
+    expect(incidentTitle({ metric: 'disk', threshold: 90, peak: 94.6, unit: '%' })).toBe('Disk / above 90%');
     expect(incidentTitle({ metric: 'memory', threshold: 20, peak: 12, unit: '%' })).toBe('Memory below 20%');
     expect(incidentTitle({ metric: 'heartbeat', threshold: 0, peak: 0, unit: '' })).toBe('No heartbeat');
   });
@@ -104,7 +104,7 @@ describe('verdict', () => {
     const verdict = buildVerdict(servers, incidents, now);
     expect(verdict.kind).toBe('critical');
     expect(verdict.worst?.id).toBe(1);
-    expect(verdict.reason).toEqual({ subject: 'disk', value: '94.2%', duration: '23 min' });
+    expect(verdict.reason).toEqual({ subject: 'disk /', value: '94.2%', duration: '23 min' });
     expect(verdictHeadline(verdict)).toEqual({ primary: '1 server critical', secondary: '2 need attention' });
   });
 

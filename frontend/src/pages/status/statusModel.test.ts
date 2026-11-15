@@ -76,7 +76,7 @@ describe('incidents', () => {
 
   it('shows resolved incidents with their length and open ones as ongoing', () => {
     const resolved = incidentView({ service: 'db', metric: 'disk', severity: 'critical', started_at: '2026-11-15T13:00:00Z', resolved_at: '2026-11-15T13:38:00Z' }, now);
-    expect(resolved).toMatchObject({ status: 'healthy', badge: 'Resolved', title: 'db: Disk critical' });
+    expect(resolved).toMatchObject({ status: 'healthy', badge: 'Resolved', title: 'db: Disk / critical' });
     expect(resolved.when).toMatch(/38m$/);
     const open = incidentView({ service: 'edge', metric: 'heartbeat', severity: 'critical', started_at: '2026-11-15T14:00:00Z', resolved_at: null }, now);
     expect(open).toMatchObject({ status: 'offline', badge: 'Ongoing', title: 'edge: Unreachable' });

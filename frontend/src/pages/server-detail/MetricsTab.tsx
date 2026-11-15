@@ -11,6 +11,7 @@ import { Skeleton } from '../../components/Skeletons';
 import { TimeRangePicker } from '../../components/TimeRangePicker';
 import { useServerSeries } from '../../hooks/api/servers';
 import { useStoredState } from '../../hooks/useStoredState';
+import { AGENT_UPDATE_URL } from '../../lib/agentInstall';
 import { cn } from '../../lib/cn';
 import { EMPTY_VALUE, toTime } from '../../lib/format';
 import { oneOf, STORAGE_KEYS } from '../../lib/storage';
@@ -149,8 +150,11 @@ function NotReported({ specs, agentVersion, className }: { specs: readonly Chart
     <div className={cn('flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded border border-dashed border-line-strong px-3 py-2.5 text-[13px]', className)}>
       <span className="cap flex-none">{specs.map((spec) => spec.title).join(' · ')}</span>
       <span className="min-w-0 flex-1 text-ink-muted">
-        Not reported by agent {agentVersionLabel(agentVersion)}. Re-run the install command to update it.
+        Not reported by agent {agentVersionLabel(agentVersion)}
       </span>
+      <a href={AGENT_UPDATE_URL} target="_blank" rel="noreferrer" className="text-[13px] text-accent hover:text-ink">
+        Update agent
+      </a>
     </div>
   );
 }
