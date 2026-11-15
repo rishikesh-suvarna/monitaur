@@ -29,6 +29,7 @@ type Incident struct {
 	AckedBy          *string    `json:"acked_by"`
 	LastNotifiedAt   *time.Time `json:"last_notified_at"`
 	NotifiedChannels []string   `json:"notified_channels"`
+	Silenced         bool       `json:"silenced"` // opened during a maintenance window
 }
 
 func (i Incident) State() string {
@@ -44,7 +45,8 @@ func (i Incident) State() string {
 
 const incidentColumns = `i.id, i.org_id, i.server_id, s.name, i.rule_id, i.rule_name, i.metric, i.severity, i.threshold,
 	i.peak, i.last_value, i.samples_over, i.started_at, i.resolved_at, i.resolved_how, i.acked_at,
-	NULLIF(COALESCE(NULLIF(u.display_name, ''), u.email), ''), i.last_notified_at, i.notified_channels`
+	NULLIF(COALESCE(NULLIF(u.display_name, ''), u.email), ''), i.last_notified_at, i.notified_channels,
+	i.silenced`
 
 const incidentFrom = ` FROM incidents i JOIN servers s ON s.id = i.server_id LEFT JOIN users u ON u.id = i.acked_by `
 
@@ -52,7 +54,8 @@ func scanIncident(row pgx.Row) (Incident, error) {
 	var i Incident
 	err := row.Scan(&i.ID, &i.OrgID, &i.ServerID, &i.ServerName, &i.RuleID, &i.RuleName, &i.Metric, &i.Severity,
 		&i.Threshold, &i.Peak, &i.LastValue, &i.SamplesOver, &i.StartedAt, &i.ResolvedAt, &i.ResolvedHow,
-		&i.AckedAt, &i.AckedBy, &i.LastNotifiedAt, &i.NotifiedChannels)
+		&i.AckedAt, &i.AckedBy, &i.LastNotifiedAt, &i.NotifiedChannels,
+		&i.Silenced)
 	if i.NotifiedChannels == nil {
 		i.NotifiedChannels = []string{}
 	}
