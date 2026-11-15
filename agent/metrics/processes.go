@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 const (
@@ -62,11 +62,11 @@ type ProcessList struct {
 // concurrent use.
 type ProcessCollector struct {
 	procs map[int32]*process.Process
-	users map[int32]string
+	users map[uint32]string // gopsutil v4 reports uids as uint32
 }
 
 func NewProcessCollector() *ProcessCollector {
-	return &ProcessCollector{procs: make(map[int32]*process.Process), users: make(map[int32]string)}
+	return &ProcessCollector{procs: make(map[int32]*process.Process), users: make(map[uint32]string)}
 }
 
 // procSample is what ranking needs; details are read for the winners only.
