@@ -553,6 +553,14 @@ interface CheckJSON {
 ```
 SSE: `event: checks` every 3 s when the org has checks: `{checks:[{id,status,last,uptime_24h,tls_days_left,maintenance}]}`. Incidents gain `check_id: number|null` and `check_name: string|null`; for check incidents `server_id` is `null` and `server_name` is the check name. Status page: `PATCH /org` `status_page.check_ids`; public `services[]` gains `kind: 'server'|'check'`.
 
+Implementation notes (backend `checks` package):
+- Validation: name 1 to 60 chars; http targets are http(s) URLs without credentials; tcp needs `host:port`; tls defaults to port 443 (stored as `host:443`); literal private or loopback addresses and `localhost` are refused with 400 unless `checks.allow_private_targets` (hostnames are enforced at dial time). `interval_seconds` defaults to max(60, plan minimum), must be at least the plan minimum (and 10) and at most 86400; `timeout_seconds` defaults to 10, 1 to 30, not above the interval. `expect_status` is 0 or 100 to 599; a 3xx `expect_status` checks the redirect itself (not followed). `tls_warn_days` is 0 (no warning) to 365. tcp and tls checks clear `expect_status` and `keyword`.
+- `PATCH /org` without `status_page.check_ids` leaves them unchanged (older clients); `GET /org` returns `status_page.check_ids`, `plan.max_checks`, `plan.min_check_interval_seconds` and `usage.checks`.
+- Results: `24h` is 96 steps of 15 min from memory (after a restart, flushed hours fill the gap), `7d` is 168 steps of 1 h and `30d` 360 steps of 2 h from `check_results_1h` plus unflushed results. Latency covers successful probes only.
+- Incidents: `rule_name` is `Check down` or `Certificate expiring`; outage `last_value` counts consecutive failures (`threshold` 2), certificate `last_value` is days left (`threshold` = `tls_warn_days`, `comparison: 'below'`). Changing a check's type or target closes its open incidents with `resolved_how: 'check_changed'`, pausing with `'check_paused'` (no notification, `incident` `refresh` event). `GET /incidents` also accepts `check_id`. A manual resolve resets the failure count, so a still-failing check reopens after two more failures.
+- Public status page: check services use the server vocabulary (`down` is `critical`, `degraded` is `warning`, `paused` is `offline`, `up` and `pending` are `healthy`) so `overall` ranks both kinds; daily `pct` is null for days without flushed probes.
+- `POST /checks/:id/run` is limited to 6 per minute per org (burst 3) and returns `{result}` in the `last` shape.
+
 ### 6.4 F11 Maintenance windows (migration `00005_maintenance.sql`)
 
 Table `maintenance_windows(id, org_id, name, scope_all bool, scope_server_ids bigint[], scope_tags text[], scope_check_ids bigint[], starts_at, ends_at, created_by, created_at)` with `CHECK (ends_at > starts_at)`; `incidents.silenced boolean NOT NULL DEFAULT false`.
