@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SeriesPoint } from '../../api/types';
+import { EMPTY_VALUE } from '../../lib/format';
 
 import {
   buildChartSpecs,
+  compactUnitHint,
   findGaps,
+  formatLoadLimit,
+  formatValue,
+  isUnreportedSpec,
+  loadAverages,
+  loadAxisMax,
+  maxDiskRate,
+  partitionSpecs,
+  valueSuffix,
   formatSpan,
   formatStep,
   latestRowIndex,
@@ -21,6 +31,7 @@ import {
   unreportedFields,
   valueSeverity,
   type ChartRow,
+  type ChartSpec,
 } from './chartData';
 
 const MB = 1024 * 1024;
@@ -28,18 +39,20 @@ const START = Date.parse('2026-11-15T12:00:00Z');
 const STEP_MS = 60_000;
 
 function point(index: number, values: Partial<Omit<SeriesPoint, 't'>> | null): SeriesPoint {
-  const empty = { cpu: null, mem: null, disk: null, net_in: null, net_out: null };
+  const empty = { cpu: null, mem: null, disk: null, net_in: null, net_out: null, load1: null, swap: null, disk_read: null, disk_write: null };
   return { t: new Date(START + index * STEP_MS).toISOString(), ...empty, ...(values ?? {}) };
 }
 
 const sample = { cpu: 40, mem: 70, disk: 88, net_in: 2 * MB, net_out: MB / 2 };
+const noHost = { load1: null, swap: null, disk_read: null, disk_write: null };
+const byKey = (specs: readonly ChartSpec[], key: ChartSpec['key']): ChartSpec | undefined => specs.find((spec) => spec.key === key);
 
 describe('toChartRows', () => {
   it('keeps nulls as breaks and scales network into the chosen unit', () => {
     const rows = toChartRows([point(0, sample), point(1, null)], pickRateUnit(2 * MB));
     expect(rows).toEqual<ChartRow[]>([
-      { ts: START, cpu: 40, mem: 70, disk: 88, net_in: 2, net_out: 0.5 },
-      { ts: START + STEP_MS, cpu: null, mem: null, disk: null, net_in: null, net_out: null },
+      { ts: START, cpu: 40, mem: 70, disk: 88, net_in: 2, net_out: 0.5, ...noHost },
+      { ts: START + STEP_MS, cpu: null, mem: null, disk: null, net_in: null, net_out: null, ...noHost },
     ]);
   });
 
@@ -99,7 +112,7 @@ describe('findGaps', () => {
 describe('unreportedFields', () => {
   it('names metrics an old agent never sends', () => {
     const series = toChartRows([point(0, { cpu: 1, mem: 2, disk: 3 }), point(1, { cpu: 1, mem: 2, disk: 3 })], pickRateUnit(0));
-    expect(unreportedFields(series)).toEqual(['net_in', 'net_out']);
+    expect(unreportedFields(series)).toEqual(['net_in', 'net_out', 'load1', 'swap', 'disk_read', 'disk_write']);
   });
 
   it('says nothing when there is no data at all', () => {
@@ -195,7 +208,7 @@ describe('buildChartSpecs', () => {
       thresholds: { cpu: { warning: 85, critical: null }, disk: { warning: 80, critical: 90 }, net_in: { warning: 100 * MB, critical: null } },
       latest: { cpu_cores: 8, mem_total: 32 * 1024 * MB, disk_total: 480 * 1024 * MB },
     });
-    const [cpu, mem, disk, net] = specs;
+    const [cpu, mem, disk, net] = (['cpu', 'mem', 'disk', 'net'] as const).map((key) => byKey(specs, key));
     expect(cpu).toMatchObject({ title: 'CPU', unitHint: '% of 8 cores', max: 100, thresholds: [{ severity: 'warning', value: 85, label: 'warn 85%' }] });
     expect(mem?.thresholds).toEqual([]);
     expect(mem?.unitHint).toBe('% of 32.0 GB');
@@ -205,17 +218,133 @@ describe('buildChartSpecs', () => {
   });
 
   it('falls back to a bare unit without totals', () => {
-    const [cpu] = buildChartSpecs({ rows, rate, thresholds: {}, latest: null });
-    expect(cpu?.unitHint).toBe('%');
+    const specs = buildChartSpecs({ rows, rate, thresholds: {}, latest: null });
+    expect(byKey(specs, 'cpu')?.unitHint).toBe('%');
+    expect(byKey(specs, 'swap')?.unitHint).toBe('%');
+    expect(byKey(specs, 'load')?.references).toEqual([]);
   });
 
   it('colours readout values by the chart lines, strictly above', () => {
-    const [, , disk] = buildChartSpecs({ rows, rate, thresholds: { disk: { warning: 80, critical: 90 } }, latest: null });
+    const disk = byKey(buildChartSpecs({ rows, rate, thresholds: { disk: { warning: 80, critical: 90 } }, latest: null }), 'disk');
     const lines = disk?.thresholds ?? [];
     expect(valueSeverity(94, 'disk', lines)).toBe('critical');
     expect(valueSeverity(90, 'disk', lines)).toBe('warning');
     expect(valueSeverity(50, 'disk', lines)).toBeNull();
     expect(valueSeverity(null, 'disk', lines)).toBeNull();
     expect(valueSeverity(99, 'cpu', lines)).toBeNull();
+  });
+});
+
+describe('host metrics (section 6.1)', () => {
+  const host = { load1: 1.25, swap: 12.5, disk_read: 4 * MB, disk_write: MB };
+
+  it('keeps load and swap as reported and scales disk I/O into its own unit', () => {
+    const [row] = toChartRows([point(0, { ...sample, ...host })], pickRateUnit(2 * MB), pickRateUnit(4 * MB));
+    expect(row).toMatchObject({ load1: 1.25, swap: 12.5, disk_read: 4, disk_write: 1, net_in: 2 });
+  });
+
+  it('reads keys an older backend leaves out as null, never 0', () => {
+    const legacy = { t: new Date(START).toISOString(), cpu: 5, mem: 6, disk: 7, net_in: 0, net_out: 0 } as unknown as SeriesPoint;
+    expect(toChartRows([legacy], pickRateUnit(0))[0]).toMatchObject({ cpu: 5, load1: null, swap: null, disk_read: null, disk_write: null });
+  });
+
+  it('finds the busiest disk rate apart from the network one', () => {
+    const series = {
+      points: [point(0, { net_in: 900 * MB, disk_read: 3 * MB, disk_write: 7 * MB })],
+      stats: { disk_read: { min: 0, avg: 1, max: 9 * MB, now: 1 } },
+    };
+    expect(maxDiskRate(series)).toBe(9 * MB);
+  });
+
+  it('formats load with two decimals and limits without trailing zeros', () => {
+    expect(formatValue(0.5, 'number')).toBe('0.50');
+    expect(formatValue(null, 'number')).toBe(EMPTY_VALUE);
+    expect(formatLoadLimit(4)).toBe('4');
+    expect(formatLoadLimit(0.75)).toBe('0.75');
+  });
+
+  it('keeps the busiest load, the core count and load thresholds on the axis', () => {
+    const rows = toChartRows([point(0, { load1: 2.2 }), point(1, { load1: 3.1 })], pickRateUnit(0));
+    expect(loadAxisMax(rows, 0, [])).toBe(5);
+    expect(loadAxisMax(rows, 8, [])).toBe(10);
+    expect(loadAxisMax(rows, 2, [12])).toBe(20);
+  });
+
+  it('draws load with a neutral core-count reference, swap in percent and disk I/O as read and write', () => {
+    const diskRate = pickRateUnit(4 * MB);
+    const rows = toChartRows([point(0, { ...sample, ...host })], pickRateUnit(2 * MB), diskRate);
+    const specs = buildChartSpecs({
+      rows,
+      rate: pickRateUnit(2 * MB),
+      diskRate,
+      thresholds: { load1: { warning: 6, critical: 12.5 }, swap: { warning: 50, critical: null } },
+      latest: { cpu_cores: 8, mem_total: 0, disk_total: 0, swap_total: 2 * 1024 * MB },
+    });
+    // Each host metric sits beside the one it explains, so small multiples pair them.
+    expect(specs.map((spec) => spec.key)).toEqual(['cpu', 'load', 'mem', 'swap', 'disk', 'disk_io', 'net']);
+    expect(byKey(specs, 'load')).toMatchObject({
+      kind: 'number',
+      unitHint: '1 min average',
+      max: 20,
+      references: [{ value: 8, label: '8 cores' }],
+      thresholds: [
+        { severity: 'warning', value: 6, label: 'warn 6', field: 'load1' },
+        { severity: 'critical', value: 12.5, label: 'crit 12.5', field: 'load1' },
+      ],
+    });
+    expect(byKey(specs, 'swap')).toMatchObject({ unitHint: '% of 2.0 GB', thresholds: [{ label: 'warn 50%', field: 'swap' }] });
+    expect(byKey(specs, 'disk_io')).toMatchObject({ kind: 'rate', unitHint: 'MB/s', max: 5, thresholds: [], references: [] });
+    expect(byKey(specs, 'disk_io')?.series.map((series) => [series.field, series.label, series.tone])).toEqual([
+      ['disk_read', 'Read', 'in'],
+      ['disk_write', 'Write', 'out'],
+    ]);
+  });
+
+  it('labels readout values and the 390 px header per kind', () => {
+    const specs = buildChartSpecs({ rows: [], rate: pickRateUnit(MB), diskRate: pickRateUnit(2048), thresholds: {}, latest: null });
+    expect(valueSuffix(byKey(specs, 'cpu')!)).toBe('%');
+    expect(valueSuffix(byKey(specs, 'net')!)).toBe(' MB/s');
+    expect(valueSuffix(byKey(specs, 'load')!)).toBe('');
+    expect(compactUnitHint(byKey(specs, 'net')!)).toBe('MB/s in / out');
+    expect(compactUnitHint(byKey(specs, 'disk_io')!)).toBe('KB/s read / write');
+    expect(compactUnitHint(byKey(specs, 'load')!)).toBe('1 min average');
+  });
+
+  it('shows the 5 and 15 minute averages only when the agent sends both', () => {
+    expect(loadAverages({ load5: 0.4, load15: 0.31 })).toBe('5 min 0.40 · 15 min 0.31');
+    expect(loadAverages({ load5: 0.4, load15: 0.31 }, true)).toBe('5m 0.40 · 15m 0.31');
+    expect(loadAverages({ load5: 0.4, load15: null })).toBeNull();
+    expect(loadAverages(null)).toBeNull();
+  });
+});
+
+describe('chart hide rule', () => {
+  const partition = (points: SeriesPoint[]) => {
+    const rows = toChartRows(points, pickRateUnit(MB));
+    return partitionSpecs(buildChartSpecs({ rows, rate: pickRateUnit(MB), thresholds: {}, latest: null }), unreportedFields(rows));
+  };
+  const keys = (specs: readonly ChartSpec[]) => specs.map((spec) => spec.key);
+
+  it('hides load, swap and disk I/O for an agent that never sends them', () => {
+    const { shown, hidden } = partition([point(0, sample), point(1, sample)]);
+    expect(keys(shown)).toEqual(['cpu', 'mem', 'disk', 'net']);
+    expect(keys(hidden)).toEqual(['load', 'swap', 'disk_io']);
+  });
+
+  it('keeps a chart that has data anywhere in the range, e.g. after an agent upgrade', () => {
+    const { shown, hidden } = partition([point(0, sample), point(1, { ...sample, load1: 0.3, swap: 1, disk_read: 2, disk_write: 10 })]);
+    expect(keys(shown)).toEqual(['cpu', 'load', 'mem', 'swap', 'disk', 'disk_io', 'net']);
+    expect(hidden).toEqual([]);
+  });
+
+  it('treats zero as reported, and keeps a two-series chart while either series has data', () => {
+    const { shown } = partition([point(0, { ...sample, swap: 0, disk_write: 5 })]);
+    expect(keys(shown)).toEqual(expect.arrayContaining(['swap', 'disk_io']));
+    expect(keys(shown)).not.toContain('load');
+    expect(isUnreportedSpec({ series: [{ field: 'disk_read', label: 'Read', tone: 'in', fillOpacity: 0 }] }, ['disk_read'])).toBe(true);
+  });
+
+  it('hides nothing while the range has no data at all (the empty state covers it)', () => {
+    expect(partition([point(0, null)]).hidden).toEqual([]);
   });
 });

@@ -13,12 +13,15 @@ import {
   durationOptions,
   fieldForApiError,
   formatRuleDuration,
+  formatRuleValue,
   fromApiThreshold,
+  isPercentMetric,
   newDraft,
   previewCoverage,
   previewKey,
   previewSummary,
   previewTimeline,
+  RULE_METRICS,
   ruleSentence,
   ruleTitle,
   scopeSummary,
@@ -73,6 +76,33 @@ describe('unit conversion', () => {
   it('passes percentages through and zeroes heartbeat thresholds', () => {
     expect(toApiThreshold('memory', 80)).toBe(80);
     expect(toApiThreshold('heartbeat', 42)).toBe(0);
+  });
+
+  it('offers load and swap beside the metrics they explain', () => {
+    expect(RULE_METRICS).toEqual(['cpu', 'load1', 'memory', 'swap', 'disk', 'net_in', 'net_out', 'heartbeat']);
+  });
+
+  it('treats swap as a percentage and load as a bare number', () => {
+    expect(displayUnit('swap')).toBe('%');
+    expect(isPercentMetric('swap')).toBe(true);
+    expect(displayUnit('load1')).toBe('');
+    expect(isPercentMetric('load1')).toBe(false);
+    expect(toApiThreshold('load1', 4.5)).toBe(4.5);
+    expect(formatRuleValue('load1', 4.5)).toBe('4.5');
+    expect(formatRuleValue('swap', 50)).toBe('50%');
+    expect(ruleTitle({ metric: 'load1', comparison: 'above', threshold: 8, for_seconds: 300, severity: 'warning' })).toBe(
+      'Load average > 8 for 5 min → warning',
+    );
+  });
+
+  it('accepts any load from 0 up, but keeps swap within 0 to 100%', () => {
+    const load = updateDraft(newDraft(), { metric: 'load1' });
+    expect(load.threshold).toBe('4');
+    expect(validateDraft({ ...load, threshold: '250' })).toEqual({});
+    expect(validateDraft({ ...load, threshold: '0' })).toEqual({});
+    expect(validateDraft({ ...load, threshold: '-1' }).threshold).toBe('Zero or more.');
+    const swap = updateDraft(newDraft(), { metric: 'swap' });
+    expect(validateDraft({ ...swap, threshold: '101' }).threshold).toBe('Between 0 and 100%.');
   });
 });
 

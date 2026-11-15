@@ -1,25 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { metricCells, metricSeverity } from '../components/serverMetrics';
-import { makeServer } from '../test/fixtures';
+import { makeLatest, makeServer } from '../test/fixtures';
 
 import { incidentTitle } from './status';
 import { hasThreshold, thresholdLines, thresholdSeverity } from './thresholds';
 
-const LATEST = {
-  cpu: 50,
-  mem: 82,
-  disk: 96,
-  net_in: 0,
-  net_out: 0,
-  mem_total: 0,
-  mem_used: 0,
-  disk_total: 0,
-  disk_used: 0,
-  cpu_cores: 4,
-  uptime_s: 0,
-  at: '2026-11-15T14:00:00Z',
-};
+const LATEST = makeLatest({ cpu: 50, mem: 82, disk: 96, cpu_cores: 4 });
 
 describe('thresholdSeverity', () => {
   it.each([

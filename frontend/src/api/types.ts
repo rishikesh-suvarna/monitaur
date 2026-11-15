@@ -6,7 +6,7 @@
 
 export type ServerStatus = 'healthy' | 'warning' | 'critical' | 'offline';
 export type Role = 'viewer' | 'member' | 'admin' | 'owner';
-export type MetricKey = 'cpu' | 'memory' | 'disk' | 'net_in' | 'net_out' | 'heartbeat';
+export type MetricKey = 'cpu' | 'memory' | 'disk' | 'net_in' | 'net_out' | 'heartbeat' | 'load1' | 'swap';
 export type Severity = 'warning' | 'critical';
 export type IncidentState = 'open' | 'acked' | 'resolved';
 export type Comparison = 'above' | 'below';
@@ -139,6 +139,27 @@ export interface CreateInviteResponse {
 
 // ---------------------------------------------------------------- servers
 
+/** A physical filesystem (section 6.1: no tmpfs, overlay, squashfs or proc; at most 16). */
+export interface ServerMount {
+  path: string;
+  fstype: string;
+  /** bytes */
+  total: number;
+  /** bytes */
+  used: number;
+  /** 0 to 100 */
+  pct: number;
+}
+
+/** A network interface (loopback excluded, at most 16) with rates from counter deltas. */
+export interface ServerInterface {
+  name: string;
+  /** bytes per second */
+  in: number;
+  /** bytes per second */
+  out: number;
+}
+
 export interface ServerLatest {
   cpu: number;
   mem: number;
@@ -154,6 +175,24 @@ export interface ServerLatest {
   cpu_cores: number;
   uptime_s: number;
   at: string;
+  // Section 6.1 host metrics: null when the agent does not report them (older agents), never 0.
+  load1: number | null;
+  load5: number | null;
+  load15: number | null;
+  /** 0 to 100 */
+  swap: number | null;
+  /** bytes */
+  swap_total: number | null;
+  /** bytes */
+  swap_used: number | null;
+  /** bytes per second */
+  disk_read: number | null;
+  /** bytes per second */
+  disk_write: number | null;
+  /** Empty for older agents. */
+  mounts: ServerMount[];
+  /** Empty for older agents. */
+  interfaces: ServerInterface[];
 }
 
 export interface ServerSpark {
@@ -184,7 +223,7 @@ export interface ServerSummary {
   thresholds: ServerThresholds;
 }
 
-/** ServerSummary.thresholds: keyed cpu, mem, disk, net_in, net_out. */
+/** ServerSummary.thresholds: keyed cpu, mem, disk, net_in, net_out, load1 and swap. */
 export type ServerThresholds = Partial<Record<SeriesField, ThresholdPair>>;
 
 export interface ServersResponse {
@@ -241,6 +280,13 @@ export interface SeriesPoint {
   disk: number | null;
   net_in: number | null;
   net_out: number | null;
+  // Section 6.1: null for steps without extended samples (older agents).
+  load1: number | null;
+  swap: number | null;
+  /** bytes per second */
+  disk_read: number | null;
+  /** bytes per second */
+  disk_write: number | null;
 }
 
 export interface SeriesStat {
@@ -250,7 +296,7 @@ export interface SeriesStat {
   now: number;
 }
 
-export type SeriesField = 'cpu' | 'mem' | 'disk' | 'net_in' | 'net_out';
+export type SeriesField = 'cpu' | 'mem' | 'disk' | 'net_in' | 'net_out' | 'load1' | 'swap' | 'disk_read' | 'disk_write';
 
 export interface ThresholdPair {
   warning: number | null;

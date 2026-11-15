@@ -26,11 +26,14 @@ const DISPLAY_DECIMALS = 2;
 
 export type DisplayUnit = '%' | 'MB/s' | '';
 
-export const RULE_METRICS: readonly MetricKey[] = ['cpu', 'memory', 'disk', 'net_in', 'net_out', 'heartbeat'];
+// Each host metric sits beside the one it explains: load by CPU, swap by memory.
+export const RULE_METRICS: readonly MetricKey[] = ['cpu', 'load1', 'memory', 'swap', 'disk', 'net_in', 'net_out', 'heartbeat'];
 
-export const isPercentMetric = (metric: MetricKey): boolean => metric === 'cpu' || metric === 'memory' || metric === 'disk';
+export const isPercentMetric = (metric: MetricKey): boolean =>
+  metric === 'cpu' || metric === 'memory' || metric === 'disk' || metric === 'swap';
 export const isRateMetric = (metric: MetricKey): boolean => metric === 'net_in' || metric === 'net_out';
 
+/** Load average is a bare number (any value from 0 up); heartbeat has no threshold at all. */
 export function displayUnit(metric: MetricKey): DisplayUnit {
   if (isPercentMetric(metric)) return '%';
   if (isRateMetric(metric)) return 'MB/s';
@@ -92,6 +95,8 @@ export const DEFAULT_THRESHOLD: Record<MetricKey, number> = {
   net_in: 100,
   net_out: 50,
   heartbeat: 0,
+  load1: 4,
+  swap: 50,
 };
 
 /** "30 s", "5 min", "1 h", "1 h 30 min". */

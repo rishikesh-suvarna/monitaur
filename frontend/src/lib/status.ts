@@ -41,6 +41,8 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   net_in: 'Network in',
   net_out: 'Network out',
   heartbeat: 'Heartbeat',
+  load1: 'Load average',
+  swap: 'Swap',
 };
 
 /** How an incident is drawn: badge status, badge word and the left bar tone. */
@@ -61,10 +63,13 @@ export function presentIncident(incident: Pick<Incident, 'state' | 'metric' | 's
   return { status: 'warning', label: 'Warning', bar: 'warn' };
 }
 
+/** Unitless values (load average) keep up to this many decimals: a 6.5 threshold must not read as 7. */
+const UNITLESS_DECIMALS = 2;
+
 export function formatMetricValue(value: number, unit: MetricUnit): string {
   if (unit === '%') return formatPercent(value);
   if (unit === 'B/s') return formatRate(value);
-  return String(Math.round(value));
+  return String(Number(value.toFixed(UNITLESS_DECIMALS)));
 }
 
 /** Threshold without needless decimals: 90%, 85.5%, 100 MB/s. */
