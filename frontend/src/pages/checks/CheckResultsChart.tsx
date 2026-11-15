@@ -12,7 +12,16 @@ import { EMPTY_VALUE } from '../../lib/format';
 import { formatHoverTime, formatTick, timeTicks } from '../server-detail/chartData';
 import { formatUptime } from '../status/statusModel';
 
-import { failingStepsLabel, latencyAxisMax, RESULTS_RANGE_LABELS, RESULTS_RANGES, resultRows, summarizeResults, type ResultRow } from './checkModel';
+import {
+  failingStepsLabel,
+  latencyAxisMax,
+  RESULTS_RANGE_LABELS,
+  RESULTS_RANGES,
+  resultRows,
+  stepRows,
+  summarizeResults,
+  type ResultRow,
+} from './checkModel';
 
 // Token colours as SVG paint; data series are never status-coloured.
 const UP_COLOR = 'rgb(var(--s-in))';
@@ -56,7 +65,7 @@ function Readout({ active, payload, range }: ReadoutProps) {
   if (!active || !row) return null;
   return (
     <div className="num flex flex-col gap-0.5 rounded border border-line-strong bg-surface-1 px-2.5 py-2 text-[12px] shadow-float">
-      <span className="text-ink-faint">{formatHoverTime(row.ts, range)}</span>
+      <span className="text-ink-faint">{formatHoverTime(row.start, range)}</span>
       <span>
         up <span className="text-ink">{row.up === null ? EMPTY_VALUE : formatUptime(row.up)}</span>
       </span>
@@ -89,8 +98,9 @@ export function CheckResultsChart({ checkId, range, onRange, compact }: CheckRes
   const failing = results.data ? failingStepsLabel(summary, results.data.step_seconds) : null;
   const latencyMax = latencyAxisMax(rows);
   const hasData = rows.some((row) => row.up !== null);
-  const first = rows[0]?.ts ?? 0;
-  const last = rows[rows.length - 1]?.ts ?? 0;
+  const chartRows = useMemo(() => stepRows(rows, results.data?.step_seconds ?? 0), [rows, results.data]);
+  const first = chartRows[0]?.ts ?? 0;
+  const last = chartRows[chartRows.length - 1]?.ts ?? 0;
   const ticks = timeTicks(first, last, compact ? COMPACT_TICK_COUNT : TICK_COUNT);
   const fontSize = compact ? COMPACT_FONT_SIZE : AXIS_FONT_SIZE;
 
@@ -153,7 +163,7 @@ export function CheckResultsChart({ checkId, range, onRange, compact }: CheckRes
           <figcaption className="cap">Up</figcaption>
           <div style={{ height: UP_HEIGHT }} role="img" aria-label={`Share of successful results per step, ${formatUptime(summary.upPct)} overall`}>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} syncId={syncId} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+              <ComposedChart data={chartRows} syncId={syncId} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke={GRID_COLOR} horizontalValues={[PERCENT_MAX / 2]} />
                 {xAxis(true)}
                 <YAxis
@@ -202,7 +212,7 @@ export function CheckResultsChart({ checkId, range, onRange, compact }: CheckRes
             aria-label={`Latency per step: average ${formatLatency(summary.avgMs)}, slowest ${formatLatency(summary.maxMs)}`}
           >
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} syncId={syncId} margin={{ top: 6, right: 0, bottom: 0, left: 0 }}>
+              <ComposedChart data={chartRows} syncId={syncId} margin={{ top: 6, right: 0, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke={GRID_COLOR} horizontalValues={[latencyMax / 2]} />
                 {xAxis(false)}
                 <YAxis

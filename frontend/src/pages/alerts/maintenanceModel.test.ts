@@ -78,6 +78,7 @@ describe('durations and timing', () => {
     expect(windowTiming(window, NOW)).toBe('starts in 3 h');
     expect(windowTiming(window, NOW + 3 * HOUR_MS + 40 * MINUTE_MS)).toBe('ends in 1 h 20 min');
     expect(windowTiming(window, NOW + 7 * HOUR_MS)).toBe('ended 2 h ago');
+    expect(windowTiming(window, NOW + 5 * HOUR_MS + 20_000)).toBe('ended just now');
   });
 
   it('round-trips datetime-local values in local time', () => {

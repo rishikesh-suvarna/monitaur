@@ -418,6 +418,8 @@ export function checksSummary(counts: CheckStatusCounts): string {
 
 export interface ResultRow {
   ts: number;
+  /** Start of the step the row describes; differs from ts only on closing rows (see stepRows). */
+  start: number;
   up: number | null;
   avg: number | null;
   max: number | null;
@@ -426,9 +428,30 @@ export interface ResultRow {
 /** Chart rows, oldest first; unparsable times are dropped, gaps stay null (never interpolated). */
 export function resultRows(points: readonly CheckResultPoint[]): ResultRow[] {
   return points
-    .map((point) => ({ ts: Date.parse(point.t), up: point.up_pct, avg: point.latency_avg, max: point.latency_max }))
+    .map((point) => ({ ts: Date.parse(point.t), start: Date.parse(point.t), up: point.up_pct, avg: point.latency_avg, max: point.latency_max }))
     .filter((row) => Number.isFinite(row.ts))
     .sort((a, b) => a.ts - b.ts);
+}
+
+const MS_PER_SECOND = 1000;
+/** A closing row sits on the last millisecond of its step, before the next step's row. */
+const STEP_END_OFFSET_MS = 1;
+const SERIES_KEYS = ['up', 'avg', 'max'] as const;
+
+/**
+ * Rows to draw: a stepAfter series runs from one point to the next, so the
+ * last step of a run (and a lone step, such as a new check's first) would
+ * have no width. Each run therefore gets a closing copy of its last row at
+ * the end of that step. Summaries use the rows from resultRows, not these.
+ */
+export function stepRows(rows: readonly ResultRow[], stepSeconds: number): ResultRow[] {
+  if (!(stepSeconds > 0)) return [...rows];
+  const stepMs = stepSeconds * MS_PER_SECOND;
+  return rows.flatMap((row, index) => {
+    const next = rows[index + 1];
+    const endsRun = SERIES_KEYS.some((key) => row[key] !== null && (next === undefined || next[key] === null));
+    return endsRun ? [row, { ...row, ts: row.start + stepMs - STEP_END_OFFSET_MS }] : [row];
+  });
 }
 
 export interface ResultsSummary {

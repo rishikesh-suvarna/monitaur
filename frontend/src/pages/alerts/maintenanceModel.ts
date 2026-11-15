@@ -92,7 +92,10 @@ export function windowTiming(window: Pick<MaintenanceWindow, 'starts_at' | 'ends
   const end = toTime(window.ends_at) ?? now;
   if (state === 'scheduled') return `starts in ${formatWindowLength((start - now) / MS_PER_SECOND)}`;
   if (state === 'active') return `ends in ${formatWindowLength((end - now) / MS_PER_SECOND)}`;
-  return `ended ${formatWindowLength((now - end) / MS_PER_SECOND)} ago`;
+  const endedSeconds = (now - end) / MS_PER_SECOND;
+  // formatWindowLength never shows less than a minute; "ended 1 min ago" right after End now reads wrong.
+  if (endedSeconds < MINUTE) return 'ended just now';
+  return `ended ${formatWindowLength(endedSeconds)} ago`;
 }
 
 export function windowSeconds(window: Pick<MaintenanceWindow, 'starts_at' | 'ends_at'>): number {

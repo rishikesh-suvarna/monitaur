@@ -17,6 +17,7 @@ import {
   latencyAxisMax,
   parseHostPort,
   resultRows,
+  stepRows,
   summarizeResults,
   targetError,
   validateCheckForm,
@@ -196,6 +197,20 @@ describe('results chart shaping', () => {
   it('sorts oldest first, drops bad times and keeps gaps', () => {
     const rows = resultRows(points);
     expect(rows.map((row) => row.up)).toEqual([90, 100, null]);
+  });
+
+  it('gives the last step of each run its full width', () => {
+    const hour = 3600;
+    const lone = resultRows([{ t: '2026-11-15T18:15:00Z', up_pct: 0, latency_avg: null, latency_max: null }]);
+    const drawn = stepRows(lone, 900);
+    expect(drawn).toHaveLength(2);
+    expect(drawn[1]).toMatchObject({ up: 0, start: Date.parse('2026-11-15T18:15:00Z'), ts: Date.parse('2026-11-15T18:30:00Z') - 1 });
+
+    // 12:00 and 13:00 form one run (closed once, after 13:00); 14:00 is a gap.
+    const run = stepRows(resultRows(points), hour);
+    expect(run.map((row) => row.up)).toEqual([90, 100, 100, null]);
+    expect(run[2]?.ts).toBe(Date.parse('2026-11-15T14:00:00Z') - 1);
+    expect(stepRows(lone, 0)).toEqual(lone);
   });
 
   it('summarises uptime and latency over the range', () => {
