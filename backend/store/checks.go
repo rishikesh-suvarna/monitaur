@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,9 +31,10 @@ type Check struct {
 const (
 	checkColumns = `id, org_id, name, type, target, interval_seconds, timeout_seconds, expect_status, keyword,
 	tls_warn_days, enabled, channel_ids, created_at, updated_at`
-	// check_results_1h counts are smallint.
-	maxSmallint = math.MaxInt16
 )
+
+// check_results_1h counts are smallint, like the metric rollups' samples
+// (maxSmallint is declared in rollups.go).
 
 func scanCheck(row pgx.Row) (Check, error) {
 	var c Check

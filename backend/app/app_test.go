@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -824,5 +825,186 @@ func TestUptimeChecks(t *testing.T) {
 	}
 	if code, _ := e.do(alice, "GET", path+"/results", nil); code != http.StatusNotFound {
 		t.Fatalf("results of a deleted check = %d", code)
+	}
+}
+
+// sendExtendedMetrics sends an F6 agent's metrics payload (docs/platform-v2.md 6.1).
+func sendExtendedMetrics(t *testing.T, ws *websocket.Conn) {
+	t.Helper()
+	msg := `{"type":"metrics","data":{"cpu":{"usage":12,"cores":4},"memory":{"total":8000,"used":4000,"used_percent":50},
+		"disk":{"total":100,"used":60,"used_percent":60},"network":{"bytes_sent":100,"bytes_recv":200},"uptime":1234,
+		"load":{"load1":0.52,"load5":0.4,"load15":0.31},
+		"swap":{"total":2147483648,"used":1048576,"used_percent":0.05},
+		"disk_io":{"read_bytes":123456789,"write_bytes":987654321},
+		"mounts":[{"path":"/","fstype":"ext4","total":1000,"used":500,"used_percent":50}],
+		"interfaces":[{"name":"eth0","bytes_sent":1,"bytes_recv":2}]}}`
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sendProcesses(t *testing.T, ws *websocket.Conn) {
+	t.Helper()
+	msg := `{"type":"processes","data":{"total":312,"processes":[
+		{"pid":1,"name":"postgres","user":"postgres","cpu":12.5,"mem":3.1,"rss":123456,"cmd":"postgres -D /var/lib/postgresql"},
+		{"pid":42,"name":"nginx","user":"www-data","cpu":0.5,"mem":0.2,"rss":2048,"cmd":"nginx: worker process"}]}}`
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// serverByID finds a server in a GET /servers response.
+func serverByID(out map[string]any, id int) map[string]any {
+	for _, s := range list(out, "servers") {
+		if m := s.(map[string]any); int(m["id"].(float64)) == id {
+			return m
+		}
+	}
+	return nil
+}
+
+// TestHostMetricsAndProcesses drives F6 and F9 over the real agent socket:
+// an extended metrics payload and a processes message from a new agent next
+// to an older agent, then the API fields, nulls and tenant checks.
+func TestHostMetricsAndProcesses(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := user("alice"), user("bob")
+	e.must(http.StatusOK, alice, "GET", "/api/v1/me", nil)
+	e.must(http.StatusOK, bob, "GET", "/api/v1/me", nil)
+
+	created := e.must(http.StatusCreated, alice, "POST", "/api/v1/servers", map[string]any{"name": "db-01"})
+	newID := int(obj(created, "server")["id"].(float64))
+	legacy := e.must(http.StatusCreated, alice, "POST", "/api/v1/servers", map[string]any{"name": "old-01"})
+	oldID := int(obj(legacy, "server")["id"].(float64))
+	path := fmt.Sprintf("/api/v1/servers/%d", newID)
+
+	// Rules on the new metrics validate, and show up as chart thresholds.
+	e.must(http.StatusCreated, alice, "POST", "/api/v1/rules", map[string]any{"name": "load", "metric": "load1", "threshold": 4, "severity": "warning"})
+	e.must(http.StatusCreated, alice, "POST", "/api/v1/rules", map[string]any{"name": "swap", "metric": "swap", "threshold": 80, "severity": "critical"})
+	if code, _ := e.do(alice, "POST", "/api/v1/rules", map[string]any{"name": "bad", "metric": "swap", "threshold": 120, "severity": "warning"}); code != http.StatusBadRequest {
+		t.Fatalf("swap threshold 120 accepted: %d", code)
+	}
+
+	// Before the agent sends a list: at null and an empty list, not 404.
+	procs := e.must(http.StatusOK, alice, "GET", path+"/processes", nil)
+	if procs["at"] != nil || procs["total"].(float64) != 0 || procs["processes"] == nil || len(list(procs, "processes")) != 0 {
+		t.Fatalf("processes before any list = %v", procs)
+	}
+
+	ws := e.agent(created["token"].(string))
+	sendExtendedMetrics(t, ws)
+	sendProcesses(t, ws)
+	oldWS := e.agent(legacy["token"].(string))
+	sendMetrics(t, oldWS, 7)
+
+	var newSrv, oldSrv map[string]any
+	eventually(t, "both servers report", func() bool {
+		out := e.must(http.StatusOK, alice, "GET", "/api/v1/servers", nil)
+		newSrv, oldSrv = serverByID(out, newID), serverByID(out, oldID)
+		return obj(newSrv, "latest") != nil && obj(oldSrv, "latest") != nil
+	})
+
+	latest := obj(newSrv, "latest")
+	wantNumbers := map[string]float64{
+		"cpu": 12, "load1": 0.52, "load5": 0.4, "load15": 0.31, "swap": 0.05, "swap_total": 2147483648, "swap_used": 1048576,
+		// First sample: the disk counters have no baseline yet.
+		"disk_read": 0, "disk_write": 0,
+	}
+	for key, want := range wantNumbers {
+		got, ok := latest[key].(float64)
+		if !ok || math.Abs(got-want) > 1e-6 {
+			t.Errorf("latest.%s = %v, want %v", key, latest[key], want)
+		}
+	}
+	mounts := list(latest, "mounts")
+	if len(mounts) != 1 {
+		t.Fatalf("mounts = %v", latest["mounts"])
+	}
+	if m := mounts[0].(map[string]any); m["path"] != "/" || m["fstype"] != "ext4" || m["total"].(float64) != 1000 ||
+		m["used"].(float64) != 500 || m["pct"].(float64) != 50 {
+		t.Fatalf("mount = %v", m)
+	}
+	ifaces := list(latest, "interfaces")
+	if len(ifaces) != 1 {
+		t.Fatalf("interfaces = %v", latest["interfaces"])
+	}
+	if n := ifaces[0].(map[string]any); n["name"] != "eth0" || n["in"].(float64) != 0 || n["out"].(float64) != 0 {
+		t.Fatalf("interface = %v", n)
+	}
+	thresholds := obj(newSrv, "thresholds")
+	if obj(thresholds, "load1")["warning"] != 4.0 || obj(thresholds, "swap")["critical"] != 80.0 {
+		t.Fatalf("thresholds = %v", thresholds)
+	}
+
+	// The older agent: every extended field is present and null, not 0.
+	oldLatest := obj(oldSrv, "latest")
+	for _, key := range []string{"load1", "load5", "load15", "swap", "swap_total", "swap_used", "disk_read", "disk_write", "mounts", "interfaces"} {
+		v, present := oldLatest[key]
+		if !present || v != nil {
+			t.Errorf("older agent latest.%s = %v (present %v), want null", key, v, present)
+		}
+	}
+
+	// Series points and stats carry the new keys; old-agent steps are null.
+	for _, tc := range []struct {
+		id       int
+		wantNull bool
+	}{{newID, false}, {oldID, true}} {
+		series := e.must(http.StatusOK, alice, "GET", fmt.Sprintf("/api/v1/servers/%d/series?range=live", tc.id), nil)
+		var withData map[string]any
+		for _, p := range list(series, "points") {
+			if pt := p.(map[string]any); pt["cpu"] != nil {
+				withData = pt
+			}
+		}
+		if withData == nil {
+			t.Fatalf("server %d: no live point with data", tc.id)
+		}
+		for _, key := range []string{"load1", "swap", "disk_read", "disk_write"} {
+			v, present := withData[key]
+			if !present || (v == nil) != tc.wantNull {
+				t.Errorf("server %d: point.%s = %v (present %v), want null %v", tc.id, key, v, present, tc.wantNull)
+			}
+			if obj(series, "stats")[key] == nil {
+				t.Errorf("server %d: stats missing %q", tc.id, key)
+			}
+		}
+		if tc.id == newID && withData["load1"].(float64) != 0.52 {
+			t.Errorf("live load1 = %v, want 0.52", withData["load1"])
+		}
+	}
+
+	// Processes: the latest list, from memory.
+	eventually(t, "processes list", func() bool {
+		procs = e.must(http.StatusOK, alice, "GET", path+"/processes", nil)
+		return procs["at"] != nil
+	})
+	if procs["total"].(float64) != 312 || len(list(procs, "processes")) != 2 {
+		t.Fatalf("processes = %v", procs)
+	}
+	first := list(procs, "processes")[0].(map[string]any)
+	if first["pid"].(float64) != 1 || first["name"] != "postgres" || first["user"] != "postgres" || first["cpu"].(float64) != 12.5 ||
+		first["mem"].(float64) != 3.1 || first["rss"].(float64) != 123456 || first["cmd"] != "postgres -D /var/lib/postgresql" {
+		t.Fatalf("process = %v", first)
+	}
+	if out := e.must(http.StatusOK, alice, "GET", fmt.Sprintf("/api/v1/servers/%d/processes", oldID), nil); out["at"] != nil {
+		t.Fatalf("older agent processes = %v, want at null", out)
+	}
+
+	// Tenant isolation: another org gets a 404, never the list.
+	for _, p := range []string{path + "/processes", fmt.Sprintf("/api/v1/servers/%d/processes", oldID)} {
+		if code, out := e.do(bob, "GET", p, nil); code != http.StatusNotFound || out["code"] != "not_found" {
+			t.Fatalf("bob GET %s = %d %v, want 404", p, code, out)
+		}
+	}
+	aliceOrg := fmt.Sprint(int(list(e.must(http.StatusOK, alice, "GET", "/api/v1/me", nil), "orgs")[0].(map[string]any)["id"].(float64)))
+	if code, _ := e.do(bob, "GET", path+"/processes", nil, "X-Monitaur-Org", aliceOrg); code != http.StatusNotFound {
+		t.Fatalf("bob with alice's org header = %d, want 404", code)
+	}
+
+	// Deleting the server drops its list with it.
+	e.must(http.StatusNoContent, alice, "DELETE", path, nil)
+	if code, _ := e.do(alice, "GET", path+"/processes", nil); code != http.StatusNotFound {
+		t.Fatalf("processes of a deleted server = %d, want 404", code)
 	}
 }

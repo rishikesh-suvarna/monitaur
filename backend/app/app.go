@@ -23,6 +23,7 @@ import (
 	"backend/limits"
 	"backend/metrics"
 	"backend/notify"
+	"backend/processes"
 	"backend/secrets"
 	"backend/store"
 )
@@ -50,6 +51,7 @@ type App struct {
 	dir        *directory.Directory
 	auth       *auth.Service
 	metrics    *metrics.Store
+	processes  *processes.Store
 	engine     *alerting.Engine
 	checks     *checks.Scheduler
 	dispatcher *notify.Dispatcher
@@ -147,6 +149,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	a.metrics.OnFlush(a.housekeeping)
 	a.metrics.OnFlush(a.checksHousekeeping)
 
+	a.processes = processes.New()
 	a.hub = ingest.NewHub(a.dir, recorder{a}, a.limiter, cfg.Server.Origins(), log)
 	a.auth = auth.NewService(verifier, a.store, auth.Config{
 		DefaultPlan:     cfg.Limits.DefaultPlan,
@@ -157,7 +160,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	}, log)
 
 	a.api = api.New(api.Deps{
-		Config: cfg, Store: a.store, Auth: a.auth, Dir: a.dir, Metrics: a.metrics, Engine: a.engine,
+		Config: cfg, Store: a.store, Auth: a.auth, Dir: a.dir, Metrics: a.metrics, Processes: a.processes, Engine: a.engine,
 		Dispatcher: a.dispatcher, Hub: a.hub, Broker: a.broker, Limiter: a.limiter, Budget: a.budget, Log: log,
 		Checks: a.checks, Silenced: a.silenced,
 	})
@@ -340,6 +343,12 @@ func (r recorder) Sample(serverID int64, s metrics.Sample, minInterval time.Dura
 	r.a.engine.Heartbeat(serverID, s.Time)
 	r.a.engine.Observe(r.a.ctx, serverID, p)
 	return nil
+}
+
+// Processes keeps the agent's latest top-processes list in memory only. It
+// is not a heartbeat: liveness comes from samples and the socket.
+func (r recorder) Processes(serverID int64, snap processes.Snapshot) {
+	r.a.processes.Put(serverID, snap)
 }
 
 func (r recorder) Connected(serverID int64, version string, at time.Time) {

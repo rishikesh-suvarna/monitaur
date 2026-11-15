@@ -29,11 +29,16 @@ const (
 	MetricNetIn     Metric = "net_in"    // bytes/s
 	MetricNetOut    Metric = "net_out"   // bytes/s
 	MetricHeartbeat Metric = "heartbeat" // seconds since the last heartbeat
+	// F6 metrics, only reported by newer agents. Points and buckets without
+	// extended values are skipped for these, so an older agent neither
+	// breaches nor recovers them.
+	MetricLoad1 Metric = "load1" // 1-minute load average, absolute
+	MetricSwap  Metric = "swap"  // percent
 )
 
 func (m Metric) valid() bool {
 	switch m {
-	case MetricCPU, MetricMemory, MetricDisk, MetricNetIn, MetricNetOut, MetricHeartbeat:
+	case MetricCPU, MetricMemory, MetricDisk, MetricNetIn, MetricNetOut, MetricHeartbeat, MetricLoad1, MetricSwap:
 		return true
 	default:
 		return false
@@ -41,7 +46,12 @@ func (m Metric) valid() bool {
 }
 
 func (m Metric) percent() bool {
-	return m == MetricCPU || m == MetricMemory || m == MetricDisk
+	return m == MetricCPU || m == MetricMemory || m == MetricDisk || m == MetricSwap
+}
+
+// extended reports whether only F6 agents report the metric.
+func (m Metric) extended() bool {
+	return m == MetricLoad1 || m == MetricSwap
 }
 
 // Comparison is how a value is compared with a rule's threshold.
@@ -130,7 +140,7 @@ type Rule struct {
 	Scope       Scope
 	Metric      Metric
 	Comparison  Comparison // ignored for heartbeat ("is missing")
-	Threshold   float64    // percent for cpu/mem/disk, bytes/s for net; ignored for heartbeat
+	Threshold   float64    // percent for cpu/mem/disk/swap, bytes/s for net, absolute for load1; ignored for heartbeat
 	For         time.Duration
 	Severity    Severity
 	ChannelIDs  []int64
@@ -155,6 +165,7 @@ const (
 	minPercentThreshold = 0.0
 	maxPercentThreshold = 100.0
 	minRateThreshold    = 0.0
+	minLoadThreshold    = 0.0 // load has no upper bound: it scales with cores
 	maxRuleDuration     = 24 * time.Hour
 
 	// minHeartbeatFor keeps heartbeat rules well above the agent send
@@ -174,7 +185,7 @@ func (r Rule) Validate() error {
 		return fmt.Errorf("rule name is %d characters, the maximum is %d", n, maxRuleNameRunes)
 	}
 	if !r.Metric.valid() {
-		return fmt.Errorf("unknown metric %q: want cpu, memory, disk, net_in, net_out or heartbeat", r.Metric)
+		return fmt.Errorf("unknown metric %q: want cpu, memory, disk, swap, load1, net_in, net_out or heartbeat", r.Metric)
 	}
 	if r.Severity != Warning && r.Severity != Critical {
 		return fmt.Errorf("unknown severity %q: want warning or critical", r.Severity)
@@ -215,6 +226,12 @@ func (r Rule) validateCondition() error {
 		if r.Threshold < minPercentThreshold || r.Threshold > maxPercentThreshold {
 			return fmt.Errorf("%s threshold must be between %g and %g percent, got %g",
 				r.Metric, minPercentThreshold, maxPercentThreshold, r.Threshold)
+		}
+		return nil
+	}
+	if r.Metric == MetricLoad1 {
+		if r.Threshold < minLoadThreshold {
+			return fmt.Errorf("%s threshold must be %g or more, got %g", r.Metric, minLoadThreshold, r.Threshold)
 		}
 		return nil
 	}
@@ -294,8 +311,12 @@ func (r Rule) incidentThreshold() float64 {
 }
 
 // pointValue extracts the rule's metric from a live point. ok is false for
-// heartbeat rules and for values that cannot be compared (NaN, Inf).
+// heartbeat rules, for values that cannot be compared (NaN, Inf) and for F6
+// metrics on a point from an older agent.
 func (r Rule) pointValue(p metrics.Point) (float64, bool) {
+	if r.Metric.extended() && !p.Extended {
+		return 0, false
+	}
 	var v float32
 	switch r.Metric {
 	case MetricCPU:
@@ -308,6 +329,10 @@ func (r Rule) pointValue(p metrics.Point) (float64, bool) {
 		v = p.NetInBps
 	case MetricNetOut:
 		v = p.NetOutBps
+	case MetricLoad1:
+		v = p.Load1
+	case MetricSwap:
+		v = p.Swap
 	default:
 		return 0, false
 	}
@@ -315,8 +340,12 @@ func (r Rule) pointValue(p metrics.Point) (float64, bool) {
 }
 
 // bucketValue extracts the rule's metric from a rollup, using the average so
-// a replay matches what a sustained breach looks like.
+// a replay matches what a sustained breach looks like. F6 metrics are only
+// read from buckets that had extended samples.
 func (r Rule) bucketValue(b metrics.Bucket) (float64, bool) {
+	if r.Metric.extended() && b.ExtSamples <= 0 {
+		return 0, false
+	}
 	var v float32
 	switch r.Metric {
 	case MetricCPU:
@@ -329,6 +358,10 @@ func (r Rule) bucketValue(b metrics.Bucket) (float64, bool) {
 		v = b.NetInAvg
 	case MetricNetOut:
 		v = b.NetOutAvg
+	case MetricLoad1:
+		v = b.Load1Avg
+	case MetricSwap:
+		v = b.SwapAvg
 	default:
 		return 0, false
 	}

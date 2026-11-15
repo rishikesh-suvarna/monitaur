@@ -13,6 +13,7 @@ import (
 const (
 	unitPercent = "%"
 	unitRate    = "B/s"
+	unitNone    = ""
 )
 
 // RuleToAlerting converts a stored rule for the engine.
@@ -79,11 +80,14 @@ func ChannelToNotify(c store.Channel) (notify.Channel, error) {
 // UnitFor is how a metric's values are displayed.
 func UnitFor(metric string) string {
 	switch alerting.Metric(metric) {
-	case alerting.MetricCPU, alerting.MetricMemory, alerting.MetricDisk:
+	case alerting.MetricCPU, alerting.MetricMemory, alerting.MetricDisk, alerting.MetricSwap:
 		return unitPercent
 	case alerting.MetricNetIn, alerting.MetricNetOut:
 		return unitRate
+	case alerting.MetricLoad1:
+		// A load average counts runnable tasks; "0.52" needs no unit.
+		return unitNone
 	default:
-		return ""
+		return unitNone
 	}
 }

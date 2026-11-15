@@ -24,6 +24,7 @@ import (
 	"backend/limits"
 	"backend/metrics"
 	"backend/notify"
+	"backend/processes"
 	"backend/store"
 )
 
@@ -43,6 +44,7 @@ type Deps struct {
 	Auth       *auth.Service
 	Dir        *directory.Directory
 	Metrics    *metrics.Store
+	Processes  *processes.Store
 	Engine     *alerting.Engine
 	Dispatcher *notify.Dispatcher
 	Hub        *ingest.Hub
@@ -126,6 +128,7 @@ func (a *API) Router() *gin.Engine {
 	org.PUT("/servers/:id/pin", viewer, a.pinServer(true))
 	org.DELETE("/servers/:id/pin", viewer, a.pinServer(false))
 	org.GET("/servers/:id/series", viewer, a.series)
+	org.GET("/servers/:id/processes", viewer, a.serverProcesses)
 
 	org.GET("/incidents", viewer, a.listIncidents)
 	org.POST("/incidents/:id/ack", member, a.ackIncident)
