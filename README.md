@@ -2,30 +2,16 @@
 
 Monitaur is a lightweight monitoring and alerting system designed to help you keep track of your applications and services. It provides real-time metrics, alerting capabilities, and a user-friendly interface for managing your monitoring needs.
 
-MVP Features
-Phase 1:
-
-- Basic system metrics collection
-- Simple web dashboard
-- Email alerts
-- User registration/auth
-
-Phase 2:
-
-- Custom metric collection
-- Advanced alerting (Slack, webhooks)
-- Historical data & trends
-- Multi-server management
-
 ## Features
 
-- **Real-time monitoring** - CPU, Memory, Disk, Network metrics
-- **Interactive dashboard** - Beautiful charts and statistics
-- **Smart alerts** - Configurable thresholds with notifications
-- **WebSocket streaming** - Low-latency data transmission
-- **Multi-platform** - Linux, macOS, Windows support
-- **Easy deployment** - Single binary, systemd service
-- **Secure** - Firebase authentication, encrypted connections
+- **Live fleet overview**: CPU, memory, disk and network for every server, streamed to the browser over SSE, with sparklines and a command palette (Cmd+K).
+- **Alert rules**: "when CPU is above 90% for 5 min, raise critical", scoped to all servers, specific servers or tags, with cooldown, auto-resolve, acknowledgement and a 7-day preview. A server-down (missing heartbeat) rule is on by default.
+- **Incidents, not alert spam**: a breach that lasts 40 minutes is one incident.
+- **Notification channels**: email, Slack, Discord, Telegram and signed webhooks.
+- **History**: 1 h to 30 days, downsampled server-side.
+- **Public status pages** with 90-day uptime per service.
+- **Teams**: organizations, roles, invites, plans and quotas.
+- **Agent**: a single Go binary (Linux, macOS, Windows), outbound-only, installed as a systemd service.
 
 ## Quick Start
 
@@ -68,17 +54,14 @@ Edit `/etc/monitaur/config.json`:
 
 ```json
 {
-  "token": "your-server-token-from-dashboard",
+  "token": "mt_live_... (shown once when you add the server)",
   "api_endpoint": "wss://your-monitaur-domain.com/agent/connect",
-  "collection_interval": 5,
-  "server_name": "my-production-server",
-  "alert_thresholds": {
-    "cpu": 80,
-    "memory": 85,
-    "disk": 90
-  }
+  "collection_interval": 10,
+  "server_name": "my-production-server"
 }
 ```
+
+The backend can raise the interval to your plan's minimum. Alert thresholds now live in the dashboard (Alert rules); an `alert_thresholds` block in old configs is ignored by v2 backends.
 
 Get your server token from the Monitaur dashboard by adding a new server.
 
@@ -134,84 +117,70 @@ sudo systemctl restart monitaur-agent
 
 ### Prerequisites
 
-- Go 1.21+
-- Node.js 18+
-- PostgreSQL
-- Firebase project
+- Go 1.24+
+- Node.js 20+ and Yarn 1
+- PostgreSQL 14+ (Neon works; any Postgres you can reach)
+- A Firebase project (Authentication with Google and email/password)
 
-### Backend Setup
+### Backend
 
 ```bash
 cd backend
-go mod download
-cp config.yaml.example config.yaml
-# Edit config.yaml with your settings
-go run main.go -migrate
-go run main.go
+go run . -init        # writes config.yaml; set database, firebase.project_id,
+                      # secrets.encryption_key (openssl rand -base64 32), public URLs
+go run .              # applies migrations on start, serves :8080
 ```
 
-### Frontend Setup
+Every setting can be overridden with an environment variable, for example `MONITAUR_DATABASE_URL` or `MONITAUR_SECRETS_ENCRYPTION_KEY`.
+
+Tests (DB tests need a Postgres where the user may create databases, and skip otherwise):
+
+```bash
+MONITAUR_TEST_DATABASE_URL="postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable" go test -race ./...
+```
+
+### Frontend
 
 ```bash
 cd frontend
-npm install
-# Update src/config/firebase.js with your Firebase config
-npm run dev
+yarn install
+yarn dev              # needs VITE_APP_SERVER_URL, VITE_APP_SERVER_WS_URL and VITE_FIREBASE_* in .env.development.local
+yarn typecheck && yarn lint && yarn test && yarn build
 ```
 
-### Agent Development
+### Agent
 
 ```bash
 cd agent
-go mod download
-go run main.go -init
-# Edit config.json
-go run main.go
+go run . -init        # writes config.json (0600)
+go run .
 ```
 
-### Building Releases
+### Releases
 
-The project uses GitHub Actions to automatically build and release binaries when you create a git tag:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+Pushing a `vX.Y.Z` tag builds the agent for every platform and publishes the archives with a `SHA256SUMS` file, which `install.sh` verifies.
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Go Agents     │────│   Go Backend     │────│   PostgreSQL    │
-│   (Servers)     │    │   + Firebase     │    │ + TimescaleDB   │
-└─────────────────┘    │                  │    │                 │
-                       │  - WebSocket     │    │ - Metrics       │
-┌─────────────────┐    │  - REST API      │    │ - Users         │
-│ React Frontend  │────│  - Authentication│    │ - Alerts        │
-│ + Firebase Auth │    │                  │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+agents --wss--> ingest hub --> metrics store (in memory: raw + 1 min rings)
+                     |                 |
+                     |                 +--> every 30 min: one batched write of
+                     |                      1 min / 1 h rollups to Postgres
+                     +--> alert rules engine --> incidents --> email, Slack,
+                                                              Discord, Telegram,
+                                                              webhooks
+browser --https--> REST API + SSE live stream --> in-memory directory (orgs,
+                                                  servers, rules, channels)
 ```
+
+Postgres is touched on a schedule and on user actions only, never per agent message or per dashboard poll, so a serverless database such as Neon can suspend between flushes. Design and budget: `PLAN.md` section 2.3.
+
+Monitaur is multi-tenant: users belong to organizations with roles (owner, admin, member, viewer) and a plan with limits. Agent tokens are stored hashed and shown once.
 
 ## API
 
-The backend provides a REST API for dashboard operations and WebSocket endpoints for real-time agent communication.
-
-### Authentication
-
-All API requests require a Firebase ID token:
-
-```bash
-curl -H "Authorization: Bearer <firebase-id-token>" \
-     https://your-domain.com/api/v1/dashboard
-```
-
-### Endpoints
-
-- `GET /api/v1/dashboard` - Dashboard summary
-- `GET /api/v1/servers` - List servers
-- `POST /api/v1/servers` - Create server
-- `GET /api/v1/servers/:id/metrics` - Server metrics
-- `WS /agent/connect` - Agent WebSocket connection
+REST under `/api/v1` with a Firebase ID token (`Authorization: Bearer <token>`), the live stream at `GET /api/v1/stream` (Server-Sent Events), public status pages at `GET /api/v1/public/status/:slug`, and the agent WebSocket at `GET /agent/connect`. The full contract is in [docs/platform-v2.md](docs/platform-v2.md).
 
 ## Contributing
 
