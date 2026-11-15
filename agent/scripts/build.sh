@@ -27,24 +27,18 @@ for platform in "${PLATFORMS[@]}"; do
         output_name+='.exe'
     fi
 
-    output_path="$BUILD_DIR/${APP_NAME}_${VERSION}_${GOOS}_${GOARCH}"
-    if [ $GOOS = "windows" ]; then
-        output_path+='.exe'
-    fi
+    # Build straight into the package dir. Building to
+    # "$BUILD_DIR/<package name>" first made the binary occupy the path the
+    # package dir needs, so mkdir -p failed on every non-Windows target.
+    pkg_dir="$BUILD_DIR/${APP_NAME}_${VERSION}_${GOOS}_${GOARCH}"
+    mkdir -p "$pkg_dir"
 
     echo "Building for $GOOS/$GOARCH..."
 
-    env GOOS=$GOOS GOARCH=$GOARCH go build \
+    env GOOS="$GOOS" GOARCH="$GOARCH" go build \
         -ldflags="-s -w -X main.Version=$VERSION" \
-        -o $output_path \
+        -o "$pkg_dir/$output_name" \
         .
-
-    # Create platform-specific package
-    pkg_dir="$BUILD_DIR/${APP_NAME}_${VERSION}_${GOOS}_${GOARCH}"
-    mkdir -p $pkg_dir
-
-    # Copy binary
-    cp $output_path $pkg_dir/$output_name
 
     # Copy configuration template
     cp config.json.example $pkg_dir/config.json.example 2>/dev/null || true
