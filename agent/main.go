@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -17,6 +19,9 @@ import (
 var (
 	Version = "dev" // Set during build
 )
+
+// systemd sends SIGKILL after TimeoutStopSec (90 s by default); stay well under it.
+const shutdownTimeout = 5 * time.Second
 
 func main() {
 	var (
@@ -75,24 +80,21 @@ func main() {
 	// Initialize metrics collector
 	collector := metrics.NewCollector(cfg.ServerName)
 
-	// Initialize WebSocket client
-	wsClient := client.NewClient(cfg.APIEndpoint, cfg.Token, cfg.ServerName)
-
-	// Connect to server
-	if err := wsClient.Connect(); err != nil {
-		log.Fatalf("Failed to connect to monitoring server: %v", err)
+	wsClient, err := client.NewClient(cfg.APIEndpoint, cfg.Token, cfg.ServerName)
+	if err != nil {
+		log.Fatalf("Invalid api_endpoint in config: %v", err)
 	}
-	defer wsClient.Close()
 
-	// Start heartbeat in background
-	go wsClient.StartHeartbeat()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Start message listener
-	go wsClient.ListenForMessages()
-
-	// Set up graceful shutdown
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+	// The client dials, reconnects, and shuts down on its own. A backend that
+	// is down at boot is retried instead of exiting the agent.
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		wsClient.Run(ctx)
+	}()
 
 	// Main monitoring loop
 	ticker := time.NewTicker(time.Duration(cfg.CollectionInterval) * time.Second)
@@ -110,11 +112,9 @@ func main() {
 				continue
 			}
 
-			// Send metrics to server
-			if wsClient.IsConnected() {
-				if err := wsClient.SendMetrics(systemMetrics); err != nil {
-					log.Printf("Error sending metrics: %v", err)
-				}
+			// While disconnected samples are dropped; the client logs the outage.
+			if err := wsClient.SendMetrics(systemMetrics); err != nil && !errors.Is(err, client.ErrNotConnected) {
+				log.Printf("Error sending metrics: %v", err)
 			}
 
 			// Check for alerts
@@ -127,10 +127,8 @@ func main() {
 			// Send alerts
 			for _, alert := range alerts {
 				log.Printf("ALERT: %s", alert.Message)
-				if wsClient.IsConnected() {
-					if err := wsClient.SendAlert(alert); err != nil {
-						log.Printf("Error sending alert: %v", err)
-					}
+				if err := wsClient.SendAlert(alert); err != nil && !errors.Is(err, client.ErrNotConnected) {
+					log.Printf("Error sending alert: %v", err)
 				}
 			}
 
@@ -140,8 +138,13 @@ func main() {
 				systemMetrics.Memory.UsedPercent,
 				systemMetrics.Disk.UsedPercent)
 
-		case <-interrupt:
+		case <-ctx.Done():
 			log.Println("Shutdown signal received, stopping agent...")
+			select {
+			case <-clientDone:
+			case <-time.After(shutdownTimeout):
+				log.Println("Timed out waiting for the connection to close")
+			}
 			return
 		}
 	}
