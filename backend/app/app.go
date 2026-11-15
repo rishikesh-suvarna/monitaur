@@ -60,6 +60,13 @@ type App struct {
 	ctx           context.Context // app lifetime, for engine work triggered by ingest
 	seedMu        sync.Mutex
 	lastRetention time.Time
+
+	// Maintenance bookkeeping: which open incidents were announced to a
+	// channel, and which fired inside a window and still need announcing if
+	// they outlive it.
+	announceMu  sync.Mutex
+	announced   map[int64]bool
+	unannounced map[int64]alerting.Event
 }
 
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, verifier auth.Verifier) (*App, error) {
@@ -71,7 +78,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, log: log, ctx: ctx}
+	a := &App{cfg: cfg, log: log, ctx: ctx, announced: map[int64]bool{}, unannounced: map[int64]alerting.Event{}}
 	a.store = store.New(pool, box)
 	a.dir = directory.New(a.store)
 	if err := a.dir.Load(ctx); err != nil {
@@ -107,6 +114,13 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	}
 	if err := a.engine.Load(ctx, api.RulesToAlerting(a.dir.AllRules()), infos); err != nil {
 		return nil, fmt.Errorf("load alerting engine: %w", err)
+	}
+	if open, err := a.store.LoadOpenIncidents(ctx); err == nil {
+		for _, inc := range open {
+			if len(inc.NotifiedChannels) > 0 {
+				a.announced[inc.ID] = true
+			}
+		}
 	}
 
 	mcfg := metrics.DefaultConfig()
@@ -150,7 +164,12 @@ func (a *App) Run(ctx context.Context) {
 		}
 	})
 	start(func() { a.dispatcher.Run(ctx) })
-	start(func() { a.every(ctx, engineTickEvery, func() { a.engine.Tick(ctx) }) })
+	start(func() {
+		a.every(ctx, engineTickEvery, func() {
+			a.engine.Tick(ctx)
+			a.announceAfterMaintenance()
+		})
+	})
 	start(func() { a.every(ctx, sweepEvery, a.hub.SweepTokens) })
 	start(func() { a.every(ctx, limiterSweepEvery, a.limiter.Sweep) })
 	start(func() { a.seedUnseededOrgs(ctx) })
@@ -396,6 +415,25 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 		at := ev.At
 		msg.ResolvedAt, msg.Value = &at, ev.Incident.Peak
 	}
+	a.announceMu.Lock()
+	switch ev.Kind {
+	case alerting.EventFired, alerting.EventRenotify:
+		if silenced && ev.Kind == alerting.EventFired {
+			a.unannounced[ev.Incident.ID] = ev // announce if it outlives the window
+		} else if len(targets) > 0 {
+			a.announced[ev.Incident.ID] = true
+			delete(a.unannounced, ev.Incident.ID)
+		}
+	case alerting.EventResolved:
+		// Nobody was told it fired (silenced, or no channels), so a
+		// "resolved" message would be the first anyone hears of it.
+		if !a.announced[ev.Incident.ID] {
+			targets, names = nil, nil
+		}
+		delete(a.announced, ev.Incident.ID)
+		delete(a.unannounced, ev.Incident.ID)
+	}
+	a.announceMu.Unlock()
 	if len(targets) > 0 {
 		a.dispatcher.Dispatch(targets, msg)
 	}
@@ -468,4 +506,36 @@ func comparisonOf(r alerting.Rule) alerting.Comparison {
 		return alerting.Above
 	}
 	return r.Comparison
+}
+
+// announceAfterMaintenance sends the "fired" notification for incidents that
+// opened inside a maintenance window and are still open after it ended, so a
+// problem that outlives planned work is not silently dropped. Runs on the
+// engine tick; memory only.
+func (a *App) announceAfterMaintenance() {
+	now := time.Now()
+	a.announceMu.Lock()
+	var due []alerting.Event
+	for id, ev := range a.unannounced {
+		if !a.silenced(ev.Server.OrgID, ev.Server.ID, 0, now) {
+			due = append(due, ev)
+			delete(a.unannounced, id)
+		}
+	}
+	a.announceMu.Unlock()
+
+	for _, ev := range due {
+		open := false
+		for _, inc := range a.engine.Open(ev.Server.OrgID) {
+			if inc.ID == ev.Incident.ID {
+				ev.Incident, open = inc, true
+				break
+			}
+		}
+		if !open {
+			continue // resolved meanwhile
+		}
+		ev.At = now
+		(&notifier{app: a}).Notify(a.ctx, ev)
+	}
 }

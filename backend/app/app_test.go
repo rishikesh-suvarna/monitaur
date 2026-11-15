@@ -519,6 +519,16 @@ func TestMaintenanceWindows(t *testing.T) {
 	if m := maintenanceByID(list(e.must(http.StatusOK, alice, "GET", "/api/v1/servers", nil), "servers")); m[prodID] != false {
 		t.Fatalf("/servers maintenance after end = %v", m)
 	}
+	// web-01's incident is still firing after the window: it is announced
+	// once now (on the next engine tick), not silently dropped.
+	select {
+	case body := <-received:
+		if body["server"] != "web-01" || body["event"] != "fired" {
+			t.Fatalf("after the window: got %v, want a fired notification for web-01", body)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("incident that outlived the maintenance window was never announced")
+	}
 
 	// Validation.
 	start := time.Now().UTC().Add(time.Hour)
