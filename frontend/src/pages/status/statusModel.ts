@@ -48,8 +48,8 @@ const formatDay = (day: string): string => {
 };
 
 /** "100%", "99.98%": never rounds up to 100. */
-export function formatUptime(pct: number): string {
-  if (!Number.isFinite(pct)) return EMPTY_VALUE;
+export function formatUptime(pct: number | null): string {
+  if (pct === null || !Number.isFinite(pct)) return EMPTY_VALUE;
   if (pct >= PERCENT_MAX) return '100%';
   const factor = 10 ** UPTIME_DECIMALS;
   return `${(Math.floor(Math.max(0, pct) * factor) / factor).toFixed(UPTIME_DECIMALS)}%`;

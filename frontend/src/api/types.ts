@@ -441,7 +441,8 @@ export interface PublicStatusDay {
 export interface PublicStatusService {
   name: string;
   status: ServerStatus;
-  uptime_pct: number;
+  /** Null until the backend's first metrics flush has measured anything. */
+  uptime_pct: number | null;
   /** 90 days, oldest first. */
   days: PublicStatusDay[];
 }

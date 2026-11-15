@@ -35,6 +35,8 @@ describe('uptime bar shaping', () => {
   it('formats uptime without rounding up to 100%', () => {
     expect(formatUptime(100)).toBe('100%');
     expect(formatUptime(99.999)).toBe('99.99%');
+    // Unknown before the backend's first flush.
+    expect(formatUptime(null)).toBe(formatUptime(Number.NaN));
     expect(formatUptime(99.71)).toBe('99.71%');
   });
 
