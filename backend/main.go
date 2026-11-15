@@ -1,122 +1,142 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
+	"backend/app"
 	"backend/auth"
 	"backend/config"
 	"backend/database"
-	"backend/handlers"
+)
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+	shutdownTimeout   = 25 * time.Second
 )
 
 func main() {
-	var (
-		createConfig = flag.Bool("init", false, "Create sample config.yaml file")
-		migrate      = flag.Bool("migrate", false, "Run database migrations")
-	)
+	initConfig := flag.Bool("init", false, "write a sample config.yaml and exit")
+	migrateOnly := flag.Bool("migrate", false, "apply database migrations and exit")
 	flag.Parse()
 
-	// Create sample config if requested
-	if *createConfig {
+	if *initConfig {
 		if err := config.CreateSampleConfig(); err != nil {
-			log.Fatalf("Failed to create config: %v", err)
+			slog.Error("create sample config", "err", err)
+			os.Exit(1)
 		}
-		log.Println("Sample config.yaml created. Please edit it with your settings.")
+		slog.Info("wrote config.yaml; edit it, then start the server")
 		return
 	}
+	if err := run(*migrateOnly); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
 
-	// Load configuration
+func run(migrateOnly bool) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		return err
 	}
+	log := newLogger(cfg.Log)
+	slog.SetDefault(log)
 
-	// Initialize database
-	db, err := database.NewDatabase(&cfg.Database)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := database.Open(ctx, cfg.Database)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		return err
 	}
+	defer pool.Close()
 
-	// Run migrations if requested
-	if *migrate {
-		if err := db.AutoMigrate(); err != nil {
-			log.Fatalf("Failed to run migrations: %v", err)
+	if migrateOnly || cfg.Database.AutoMigrate {
+		if err := database.Migrate(ctx, pool, log); err != nil {
+			return err
 		}
-		log.Println("Database migrations completed successfully")
-		return
+	}
+	if migrateOnly {
+		return nil
 	}
 
-	// Initialize Firebase Auth
-	firebaseAuth, err := auth.NewFirebaseAuth(&cfg.Firebase)
+	verifier, err := auth.NewFirebaseVerifier(ctx, cfg.Firebase)
 	if err != nil {
-		log.Fatalf("Failed to initialize Firebase Auth: %v", err)
+		return err
 	}
-
-	// Initialize handlers
-	wsHandler := handlers.NewWebSocketHandler(db, cfg)
-	apiHandler := handlers.NewAPIHandler(db, firebaseAuth, wsHandler)
-	dashboardHandler := handlers.NewDashboardHandler(db, wsHandler)
-
-	// Initialize Gin router
-	if gin.Mode() == gin.ReleaseMode {
-		gin.SetMode(gin.ReleaseMode)
+	application, err := app.New(ctx, cfg, log, pool, verifier)
+	if err != nil {
+		return err
 	}
-	router := gin.Default()
-
-	// CORS middleware
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{cfg.Server.AllowOrigins}
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	router.Use(cors.New(corsConfig))
-
-	// Health check endpoint
-	router.GET("/health", apiHandler.HealthCheck)
-
-	// Agent WebSocket endpoint (no auth required, uses token authentication)
-	router.GET("/agent/connect", wsHandler.HandleAgentConnection)
-
-	// API routes (require Firebase authentication)
-	api := router.Group("/api/v1")
-	api.Use(firebaseAuth.AuthMiddleware())
-	api.Use(firebaseAuth.EnsureUserExists(db))
-	{
-		// User routes
-		api.GET("/profile", apiHandler.GetUserProfile)
-
-		// Server management routes
-		api.GET("/servers", apiHandler.GetUserServers)
-		api.POST("/servers", apiHandler.CreateServer)
-		api.DELETE("/servers/:id", apiHandler.DeleteServer)
-
-		// Metrics routes
-		api.GET("/servers/:id/metrics", apiHandler.GetServerMetrics)
-
-		// Alert routes
-		api.GET("/servers/:id/alerts", apiHandler.GetServerAlerts)
-		api.PUT("/alerts/:id/resolve", apiHandler.ResolveAlert)
-
-		// Dashboard routes
-		api.GET("/dashboard", dashboardHandler.GetDashboardData)
-		api.GET("/servers/:id/dashboard", dashboardHandler.GetServerDashboard)
-		api.GET("/servers/:id/chart", dashboardHandler.GetMetricsChart)
-	}
-
-	// Start server
-	serverAddr := cfg.Server.Host + ":" + cfg.Server.Port
-	log.Printf("Starting server on %s", serverAddr)
 
 	srv := &http.Server{
-		Addr:    serverAddr,
-		Handler: router,
+		Addr:              net.JoinHostPort(cfg.Server.Host, cfg.Server.Port),
+		Handler:           application.Handler(),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		// No WriteTimeout: SSE and agent WebSockets are long-lived. Handlers
+		// bound their own work instead.
+		IdleTimeout: idleTimeout,
+		// Request contexts end on SIGTERM, so SSE handlers return and
+		// Shutdown does not wait for them.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start server: %v", err)
+	appDone := make(chan struct{})
+	go func() {
+		defer close(appDone)
+		application.Run(ctx)
+	}()
+
+	serveErr := make(chan error, 1)
+	go func() {
+		log.Info("listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Info("shutting down")
+	case err := <-serveErr:
+		stop()
+		return err
 	}
+
+	application.Shutdown()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Warn("http shutdown", "err", err)
+	}
+	select {
+	case <-appDone: // includes the final metrics flush
+	case <-shutdownCtx.Done():
+		log.Warn("timed out waiting for background work")
+	}
+	return nil
+}
+
+func newLogger(cfg config.LogConfig) *slog.Logger {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
+		level = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if strings.EqualFold(cfg.Format, "text") {
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }
