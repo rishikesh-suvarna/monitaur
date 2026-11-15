@@ -54,10 +54,31 @@ export interface Org {
   name: string;
   plan_id: string;
   status_page: StatusPageSettings;
+  /** Public status page address segment (`/status/<slug>`). */
+  slug: string;
+  personal: boolean;
+  /** The caller's role; empty on POST /invites/accept, which has no org context yet. */
+  role: Role | '';
+  created_at: string;
 }
 
-/** Section 4 only says `{...limits}`; the limit names follow the plans table. 0 = unlimited. */
-export type PlanLimits = Record<string, number | string | boolean | null>;
+/** GET /org .plan. Every limit uses 0 for unlimited. */
+export interface Plan {
+  id: string;
+  name: string;
+  max_servers: number;
+  min_interval_seconds: number;
+  retention_1m_days: number;
+  retention_1h_days: number;
+  max_members: number;
+  alert_emails_per_day: number;
+  max_rules: number;
+  max_channels: number;
+  api_rpm: number;
+}
+
+/** @deprecated Use Plan. */
+export type PlanLimits = Plan;
 
 export interface OrgUsage {
   servers: number;
@@ -69,12 +90,15 @@ export interface OrgUsage {
 
 export interface OrgResponse {
   org: Org;
-  plan: PlanLimits;
+  plan: Plan;
   usage: OrgUsage;
 }
 
 export interface UpdateOrgBody {
   name?: string;
+  /** 3 to 40 lowercase letters, digits and dashes, starting with a letter or digit. */
+  slug?: string;
+  /** Replaces the whole status page config, so send every field. */
   status_page?: Omit<StatusPageSettings, 'slug'>;
 }
 
@@ -91,6 +115,7 @@ export interface Invite {
   email: string;
   role: Role;
   expires_at: string;
+  created_at: string;
 }
 
 export interface MembersResponse {
@@ -100,7 +125,16 @@ export interface MembersResponse {
 
 export interface CreateInviteBody {
   email: string;
-  role: Role;
+  /** Owner is not invitable; promote an accepted member instead. */
+  role: Exclude<Role, 'owner'>;
+}
+
+export interface CreateInviteResponse {
+  invite: Invite;
+  /** The accept link. Returned to admins so it can be shared when email is not configured. */
+  invite_url: string;
+  /** False when SMTP is off or sending failed: share invite_url by hand. */
+  emailed: boolean;
 }
 
 // ---------------------------------------------------------------- servers
@@ -327,14 +361,20 @@ export interface RuleResponse {
 export interface RulePreviewIncident {
   server_id: number;
   start: string;
-  end: string;
+  /** null while the replayed incident would still be open. */
+  end: string | null;
+  /** In the rule's API unit: percent, or bytes/s for network. */
   peak: number;
 }
 
 export interface RulePreviewResponse {
   matched_servers: number;
+  /** The backend replays at most this many of the matched servers. */
+  previewed: number;
+  /** Number of incidents the rule would have opened (incidents.length). */
+  would_fire: number;
   incidents: RulePreviewIncident[];
-  would_fire: boolean;
+  window_hours: number;
 }
 
 // ---------------------------------------------------------------- channels
@@ -349,6 +389,7 @@ export interface Channel {
   last_delivery_at: string | null;
   last_delivery_ok: boolean | null;
   last_error: string | null;
+  created_at: string;
 }
 
 /** Write-only channel config (backend notify.ChannelConfig). */
@@ -363,6 +404,7 @@ export interface ChannelConfig {
 export interface CreateChannelBody {
   type: ChannelType;
   name: string;
+  enabled?: boolean;
   config: ChannelConfig;
 }
 
@@ -388,26 +430,41 @@ export interface ChannelTestResponse {
 // ---------------------------------------------------------------- public status
 
 export interface PublicStatusDay {
+  /** YYYY-MM-DD (UTC). */
   day: string;
-  pct: number;
-  worst: ServerStatus;
+  /** Percent of the day the server reported; null before the server existed. */
+  pct: number | null;
+  /** Worst incident severity that day, or null for none. */
+  worst: Severity | null;
 }
 
 export interface PublicStatusService {
   name: string;
   status: ServerStatus;
   uptime_pct: number;
+  /** 90 days, oldest first. */
   days: PublicStatusDay[];
 }
 
+export interface PublicStatusIncident {
+  service: string;
+  metric: MetricKey;
+  severity: Severity;
+  started_at: string;
+  resolved_at: string | null;
+}
+
+/** GET /public/status/:slug (cached 60 s by the backend). */
 export interface PublicStatusResponse {
   title: string;
   overall: ServerStatus;
   updated_at: string;
   services: PublicStatusService[];
-  /** Section 4 leaves the incident shape open (`incidents:[...]`). */
-  incidents: Record<string, unknown>[];
+  incidents: PublicStatusIncident[];
 }
+
+/** The name section 4 uses for this shape. */
+export type PublicStatus = PublicStatusResponse;
 
 // ---------------------------------------------------------------- SSE
 

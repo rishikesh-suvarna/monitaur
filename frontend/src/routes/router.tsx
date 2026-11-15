@@ -15,8 +15,8 @@ const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 const ServerDetailPage = lazy(() => import('../pages/server-detail/ServerDetailPage'));
 const ServerSettingsPage = lazy(() => import('../pages/server-settings/ServerSettingsPage'));
 const AlertsPage = lazy(() => import('../pages/alerts/AlertsPage'));
-const RulesPage = lazy(() => import('../pages/placeholders/RulesPage'));
-const ChannelsPage = lazy(() => import('../pages/placeholders/ChannelsPage'));
+const RulesPage = lazy(() => import('../pages/rules/RulesPage'));
+const ChannelsPage = lazy(() => import('../pages/channels/ChannelsPage'));
 const SettingsPage = lazy(() => import('../pages/placeholders/SettingsPage'));
 const StatusPage = lazy(() => import('../pages/placeholders/StatusPage'));
 

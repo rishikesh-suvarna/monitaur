@@ -14,12 +14,14 @@ export { IncidentCard, IncidentRow } from './IncidentRow';
 export { Field, Input } from './Input';
 export { CONTROL_HEIGHTS, hintClasses, inputClasses, labelClasses, type ControlSize } from './inputClasses';
 export { Kbd } from './Kbd';
+export { LimitReachedHint, PLAN_SETTINGS_PATH, type LimitReachedHintProps } from './LimitReachedHint';
 export { LiveDot } from './LiveDot';
 export { LiveIndicator } from './LiveIndicator';
 export { FullScreenLoader, Loader } from './Loader';
 export { Logo } from './Logo';
 export { MetricCard } from './MetricCard';
 export { RelativeTime } from './RelativeTime';
+export { RoleBadge } from './RoleBadge';
 export { SegmentedControl, type SegmentOption } from './SegmentedControl';
 export { Select, type SelectOption } from './Select';
 export { ServerCard } from './ServerCard';
@@ -36,6 +38,7 @@ export { TimeRangePicker } from './TimeRangePicker';
 export { useToast, type ToastInput, type ToastTone } from './toastContext';
 export { ToastProvider } from './Toasts';
 export { Toggle } from './Toggle';
+export { UsageMeter, type UsageMeterProps } from './UsageMeter';
 
 // Shell
 export { AppShell } from './layout/AppShell';
