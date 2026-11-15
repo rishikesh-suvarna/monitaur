@@ -160,6 +160,11 @@ func (c *Client) SendAlert(alert any) error {
 	return c.enqueue("alert", alert)
 }
 
+// SendProcesses queues a top-processes list (backend F9).
+func (c *Client) SendProcesses(list any) error {
+	return c.enqueue("processes", list)
+}
+
 func (c *Client) enqueue(msgType string, data any) error {
 	if !c.connected.Load() {
 		return ErrNotConnected

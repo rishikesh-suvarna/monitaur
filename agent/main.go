@@ -84,6 +84,7 @@ func main() {
 
 	// Initialize metrics collector
 	collector := metrics.NewCollector(cfg.ServerName)
+	procCollector := metrics.NewProcessCollector()
 
 	wsClient, err := client.NewClient(cfg.APIEndpoint, cfg.Token, cfg.ServerName, Version)
 	if err != nil {
@@ -107,15 +108,31 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Process lists go out every max(30 s, interval). The first Collect only
+	// sets the CPU baselines, so it runs now and the first list is sent one
+	// period later with real numbers.
+	procTicker := time.NewTicker(metrics.ProcessInterval(interval))
+	defer procTicker.Stop()
+	procTick := procTicker.C
+	if _, err := procCollector.Collect(ctx); errors.Is(err, metrics.ErrProcessesUnsupported) {
+		log.Printf("Process lists disabled: %v", err)
+		procTicker.Stop()
+		procTick = nil // a nil channel never fires in the select below
+	} else if err != nil {
+		log.Printf("Error collecting processes: %v", err)
+	}
+
 	log.Println("Agent started successfully. Press Ctrl+C to stop.")
 
 	for {
 		select {
 		case <-ticker.C:
 			// Collect metrics
-			systemMetrics, err := collector.CollectMetrics()
+			systemMetrics, err := collector.CollectMetrics(ctx)
 			if err != nil {
-				log.Printf("Error collecting metrics: %v", err)
+				if ctx.Err() == nil { // a collection cut short by shutdown is not an error
+					log.Printf("Error collecting metrics: %v", err)
+				}
 				continue
 			}
 
@@ -145,6 +162,18 @@ func main() {
 				systemMetrics.Memory.UsedPercent,
 				systemMetrics.Disk.UsedPercent)
 
+		case <-procTick:
+			list, err := procCollector.Collect(ctx)
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("Error collecting processes: %v", err)
+				}
+				continue
+			}
+			if err := wsClient.SendProcesses(list); err != nil && !errors.Is(err, client.ErrNotConnected) {
+				log.Printf("Error sending processes: %v", err)
+			}
+
 		case update := <-wsClient.ConfigUpdates():
 			// The backend pushes its minimum interval (for example a plan
 			// limit). It can only slow collection down: the agent never
@@ -155,6 +184,9 @@ func main() {
 					interval, next, update.CollectionInterval, configuredInterval)
 				interval = next
 				ticker.Reset(interval)
+				if procTick != nil {
+					procTicker.Reset(metrics.ProcessInterval(interval))
+				}
 			}
 
 		case <-ctx.Done():
