@@ -80,7 +80,7 @@ func main() {
 	// Initialize metrics collector
 	collector := metrics.NewCollector(cfg.ServerName)
 
-	wsClient, err := client.NewClient(cfg.APIEndpoint, cfg.Token, cfg.ServerName)
+	wsClient, err := client.NewClient(cfg.APIEndpoint, cfg.Token, cfg.ServerName, Version)
 	if err != nil {
 		log.Fatalf("Invalid api_endpoint in config: %v", err)
 	}
@@ -97,7 +97,9 @@ func main() {
 	}()
 
 	// Main monitoring loop
-	ticker := time.NewTicker(time.Duration(cfg.CollectionInterval) * time.Second)
+	configuredInterval := time.Duration(cfg.CollectionInterval) * time.Second
+	interval := configuredInterval
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	log.Println("Agent started successfully. Press Ctrl+C to stop.")
@@ -137,6 +139,18 @@ func main() {
 				systemMetrics.CPU.Usage,
 				systemMetrics.Memory.UsedPercent,
 				systemMetrics.Disk.UsedPercent)
+
+		case update := <-wsClient.ConfigUpdates():
+			// The backend pushes its minimum interval (for example a plan
+			// limit). It can only slow collection down: the agent never
+			// samples faster than config.json asks for.
+			next := max(configuredInterval, update.CollectionInterval)
+			if next != interval {
+				log.Printf("Collection interval changed from %s to %s (server minimum %s, configured %s)",
+					interval, next, update.CollectionInterval, configuredInterval)
+				interval = next
+				ticker.Reset(interval)
+			}
 
 		case <-ctx.Done():
 			log.Println("Shutdown signal received, stopping agent...")
