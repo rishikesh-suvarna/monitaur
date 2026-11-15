@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"backend/metrics"
 )
@@ -20,11 +21,20 @@ const (
 	minutesPerDay       = 1440
 )
 
+// maxSmallint is the largest value of the smallint sample counters.
+const maxSmallint = math.MaxInt16
+
 func clampInt64(v uint64) int64 {
 	if v > math.MaxInt64 {
 		return math.MaxInt64
 	}
 	return int64(v)
+}
+
+// extReal is an extended (F6) value as a nullable real: NULL when the bucket
+// has no extended samples, so older agents never read back as 0.
+func extReal(b metrics.Bucket, v float32) pgtype.Float4 {
+	return pgtype.Float4{Float32: v, Valid: b.ExtSamples > 0}
 }
 
 func rollupTable(res metrics.Resolution) (string, error) {
@@ -68,23 +78,33 @@ func (s *Store) writeBuckets(ctx context.Context, res metrics.Resolution, bs []m
 		cpuAvg, cpuMax, memAvg, memMax, diskAvg = make([]float32, n), make([]float32, n), make([]float32, n), make([]float32, n), make([]float32, n)
 		inAvg, inMax, outAvg, outMax            = make([]float32, n), make([]float32, n), make([]float32, n), make([]float32, n)
 		memTotal, diskTotal, diskUsed, uptime   = make([]int64, n), make([]int64, n), make([]int64, n), make([]int64, n)
+		extSamples                              = make([]int32, n)
+		load1Avg, load1Max, swapAvg             = make([]pgtype.Float4, n), make([]pgtype.Float4, n), make([]pgtype.Float4, n)
+		readAvg, readMax, writeAvg, writeMax    = make([]pgtype.Float4, n), make([]pgtype.Float4, n), make([]pgtype.Float4, n), make([]pgtype.Float4, n)
 	)
 	for i, b := range bs {
 		ids[i], starts[i] = b.ServerID, b.Start.UTC()
-		samples[i] = int32(min(b.Samples, math.MaxInt16))
+		samples[i] = int32(min(b.Samples, maxSmallint))
 		cpuAvg[i], cpuMax[i], memAvg[i], memMax[i], diskAvg[i] = b.CPUAvg, b.CPUMax, b.MemAvg, b.MemMax, b.DiskAvg
 		inAvg[i], inMax[i], outAvg[i], outMax[i] = b.NetInAvg, b.NetInMax, b.NetOutAvg, b.NetOutMax
 		memTotal[i], diskTotal[i], diskUsed[i] = clampInt64(b.MemTotalBytes), clampInt64(b.DiskTotalBytes), clampInt64(b.DiskUsedBytes)
 		uptime[i] = b.UptimeSeconds
+		extSamples[i] = int32(min(max(b.ExtSamples, 0), maxSmallint))
+		load1Avg[i], load1Max[i], swapAvg[i] = extReal(b, b.Load1Avg), extReal(b, b.Load1Max), extReal(b, b.SwapAvg)
+		readAvg[i], readMax[i] = extReal(b, b.DiskReadAvg), extReal(b, b.DiskReadMax)
+		writeAvg[i], writeMax[i] = extReal(b, b.DiskWriteAvg), extReal(b, b.DiskWriteMax)
 	}
 
 	insert := `
 INSERT INTO ` + table + ` AS t (server_id, bucket, samples, cpu_avg, cpu_max, mem_avg, mem_max, disk_avg,
-	mem_total_bytes, disk_total_bytes, disk_used_bytes, net_in_bps_avg, net_in_bps_max, net_out_bps_avg, net_out_bps_max, uptime_s)
+	mem_total_bytes, disk_total_bytes, disk_used_bytes, net_in_bps_avg, net_in_bps_max, net_out_bps_avg, net_out_bps_max, uptime_s,
+	ext_samples, load1_avg, load1_max, swap_avg, disk_read_bps_avg, disk_read_bps_max, disk_write_bps_avg, disk_write_bps_max)
 SELECT v.* FROM unnest($1::bigint[], $2::timestamptz[], $3::smallint[], $4::real[], $5::real[], $6::real[], $7::real[], $8::real[],
-	$9::bigint[], $10::bigint[], $11::bigint[], $12::real[], $13::real[], $14::real[], $15::real[], $16::bigint[])
+	$9::bigint[], $10::bigint[], $11::bigint[], $12::real[], $13::real[], $14::real[], $15::real[], $16::bigint[],
+	$17::smallint[], $18::real[], $19::real[], $20::real[], $21::real[], $22::real[], $23::real[], $24::real[])
 	AS v(server_id, bucket, samples, cpu_avg, cpu_max, mem_avg, mem_max, disk_avg, mem_total_bytes,
-	     disk_total_bytes, disk_used_bytes, net_in_bps_avg, net_in_bps_max, net_out_bps_avg, net_out_bps_max, uptime_s)
+	     disk_total_bytes, disk_used_bytes, net_in_bps_avg, net_in_bps_max, net_out_bps_avg, net_out_bps_max, uptime_s,
+	     ext_samples, load1_avg, load1_max, swap_avg, disk_read_bps_avg, disk_read_bps_max, disk_write_bps_avg, disk_write_bps_max)
 -- buckets of a server deleted since they were buffered are dropped
 WHERE EXISTS (SELECT 1 FROM servers s WHERE s.id = v.server_id)
 -- A minute or hour that spans a restart arrives in two parts: merge them,
@@ -103,10 +123,22 @@ ON CONFLICT (server_id, bucket) DO UPDATE SET
 	mem_total_bytes  = EXCLUDED.mem_total_bytes,
 	disk_total_bytes = EXCLUDED.disk_total_bytes,
 	disk_used_bytes  = EXCLUDED.disk_used_bytes,
-	uptime_s         = GREATEST(t.uptime_s, EXCLUDED.uptime_s)
+	uptime_s         = GREATEST(t.uptime_s, EXCLUDED.uptime_s),
+	-- Extended (F6) averages are weighted by ext_samples, not samples: only
+	-- part of a bucket may come from an upgraded agent. No extended samples
+	-- on either side keeps NULL (NULLIF), and GREATEST skips NULLs.
+	ext_samples        = LEAST(t.ext_samples::int + EXCLUDED.ext_samples, 32767),
+	load1_avg          = (COALESCE(t.load1_avg, 0) * t.ext_samples + COALESCE(EXCLUDED.load1_avg, 0) * EXCLUDED.ext_samples) / NULLIF(t.ext_samples::int + EXCLUDED.ext_samples, 0),
+	load1_max          = GREATEST(t.load1_max, EXCLUDED.load1_max),
+	swap_avg           = (COALESCE(t.swap_avg, 0) * t.ext_samples + COALESCE(EXCLUDED.swap_avg, 0) * EXCLUDED.ext_samples) / NULLIF(t.ext_samples::int + EXCLUDED.ext_samples, 0),
+	disk_read_bps_avg  = (COALESCE(t.disk_read_bps_avg, 0) * t.ext_samples + COALESCE(EXCLUDED.disk_read_bps_avg, 0) * EXCLUDED.ext_samples) / NULLIF(t.ext_samples::int + EXCLUDED.ext_samples, 0),
+	disk_read_bps_max  = GREATEST(t.disk_read_bps_max, EXCLUDED.disk_read_bps_max),
+	disk_write_bps_avg = (COALESCE(t.disk_write_bps_avg, 0) * t.ext_samples + COALESCE(EXCLUDED.disk_write_bps_avg, 0) * EXCLUDED.ext_samples) / NULLIF(t.ext_samples::int + EXCLUDED.ext_samples, 0),
+	disk_write_bps_max = GREATEST(t.disk_write_bps_max, EXCLUDED.disk_write_bps_max)
 RETURNING server_id, bucket, (xmax = 0) AS inserted`
 	args := []any{ids, starts, samples, cpuAvg, cpuMax, memAvg, memMax, diskAvg,
-		memTotal, diskTotal, diskUsed, inAvg, inMax, outAvg, outMax, uptime}
+		memTotal, diskTotal, diskUsed, inAvg, inMax, outAvg, outMax, uptime,
+		extSamples, load1Avg, load1Max, swapAvg, readAvg, readMax, writeAvg, writeMax}
 
 	if res != metrics.Minute {
 		_, err := s.pool.Exec(ctx, insert, args...)
@@ -131,7 +163,8 @@ func (s *Store) ReadBuckets(ctx context.Context, serverID int64, res metrics.Res
 SELECT bucket, samples, COALESCE(cpu_avg, 0), COALESCE(cpu_max, 0), COALESCE(mem_avg, 0), COALESCE(mem_max, 0),
 	COALESCE(disk_avg, 0), COALESCE(net_in_bps_avg, 0), COALESCE(net_in_bps_max, 0), COALESCE(net_out_bps_avg, 0),
 	COALESCE(net_out_bps_max, 0), COALESCE(mem_total_bytes, 0), COALESCE(disk_total_bytes, 0), COALESCE(disk_used_bytes, 0),
-	COALESCE(uptime_s, 0)
+	COALESCE(uptime_s, 0), ext_samples, COALESCE(load1_avg, 0), COALESCE(load1_max, 0), COALESCE(swap_avg, 0),
+	COALESCE(disk_read_bps_avg, 0), COALESCE(disk_read_bps_max, 0), COALESCE(disk_write_bps_avg, 0), COALESCE(disk_write_bps_max, 0)
 FROM `+table+` WHERE server_id = $1 AND bucket >= $2 AND bucket < $3 ORDER BY bucket`, serverID, from, to)
 	if err != nil {
 		return nil, err
@@ -140,13 +173,17 @@ FROM `+table+` WHERE server_id = $1 AND bucket >= $2 AND bucket < $3 ORDER BY bu
 	var out []metrics.Bucket
 	for rows.Next() {
 		b := metrics.Bucket{ServerID: serverID, Res: res}
-		var samples int16
+		var samples, extSamples int16
 		var memTotal, diskTotal, diskUsed int64
 		if err := rows.Scan(&b.Start, &samples, &b.CPUAvg, &b.CPUMax, &b.MemAvg, &b.MemMax, &b.DiskAvg,
-			&b.NetInAvg, &b.NetInMax, &b.NetOutAvg, &b.NetOutMax, &memTotal, &diskTotal, &diskUsed, &b.UptimeSeconds); err != nil {
+			&b.NetInAvg, &b.NetInMax, &b.NetOutAvg, &b.NetOutMax, &memTotal, &diskTotal, &diskUsed, &b.UptimeSeconds,
+			&extSamples, &b.Load1Avg, &b.Load1Max, &b.SwapAvg,
+			&b.DiskReadAvg, &b.DiskReadMax, &b.DiskWriteAvg, &b.DiskWriteMax); err != nil {
 			return nil, err
 		}
-		b.Samples = int(samples)
+		// Rows from before migration 00003 and from older agents have
+		// ext_samples 0 and NULL values, read back as "no extended data".
+		b.Samples, b.ExtSamples = int(samples), int(max(extSamples, 0))
 		b.MemTotalBytes, b.DiskTotalBytes, b.DiskUsedBytes = uint64(max(memTotal, 0)), uint64(max(diskTotal, 0)), uint64(max(diskUsed, 0))
 		b.Start = b.Start.UTC()
 		out = append(out, b)
