@@ -7,11 +7,13 @@ import { buttonClasses, type ButtonVariant } from './buttonClasses';
 
 export type IconButtonSize = 'sm' | 'md' | 'touch';
 
-// sm 28, md 36, touch 44 (mobile touch targets are at least 44 px).
+// sm 28, md 36, touch 44 (mobile touch targets are at least 44 px). The padding
+// reset is important: buttonClasses' px-2.5/px-3.5 come later in Tailwind's CSS
+// and would otherwise squeeze the icon to a few pixels.
 const SQUARE: Record<IconButtonSize, string> = {
-  sm: 'h-7 w-7 px-0',
-  md: 'h-9 w-9 px-0',
-  touch: 'h-11 w-11 px-0',
+  sm: 'h-7 w-7 !px-0',
+  md: 'h-9 w-9 !px-0',
+  touch: 'h-11 w-11 !px-0',
 };
 
 interface IconButtonBaseProps {

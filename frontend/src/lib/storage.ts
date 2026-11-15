@@ -10,6 +10,7 @@ export const STORAGE_KEYS = {
   sidebarCollapsed: 'monitaur:sidebar-collapsed',
   overviewView: 'monitaur:overview-view',
   overviewSort: 'monitaur:overview-sort',
+  serverChartLayout: 'monitaur:server-chart-layout',
 } as const;
 
 export const SESSION_KEYS = {

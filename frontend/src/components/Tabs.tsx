@@ -8,7 +8,8 @@ import { cn } from '../lib/cn';
 const TAB_CLASSES =
   'inline-flex h-10 items-center border-b-2 border-transparent px-[2px] text-[14px] font-medium text-ink-muted no-underline ' +
   'transition-colors duration-150 ease-out hover:text-ink focus-visible:outline-offset-0';
-const TAB_SELECTED = 'border-accent text-ink';
+// Important: Tailwind emits .border-transparent after .border-accent, so a plain class would lose.
+const TAB_SELECTED = '!border-accent text-ink';
 
 export interface TabItem {
   key: string;
@@ -56,13 +57,26 @@ export interface TabLinkItem {
   label: ReactNode;
   /** Match the path exactly (for an index tab such as Metrics). */
   end?: boolean;
+  /** Overrides route matching, for tabs that differ only in the query string (`?tab=alerts`). */
+  active?: boolean;
 }
 
 /**
  * Route tabs (ServerDetail.dc.html "Metrics / Alerts / Settings"): a nav of
  * links with aria-current, styled like Tabs.
  */
-export function TabLinks({ items, 'aria-label': ariaLabel, className }: { items: readonly TabLinkItem[]; 'aria-label': string; className?: string }) {
+export function TabLinks({
+  items,
+  'aria-label': ariaLabel,
+  className,
+  itemClassName,
+}: {
+  items: readonly TabLinkItem[];
+  'aria-label': string;
+  className?: string;
+  /** Extra classes per tab, e.g. the 44 px touch height on mobile. */
+  itemClassName?: string;
+}) {
   return (
     <nav aria-label={ariaLabel} className={cn('flex gap-6', className)}>
       {items.map((item) => (
@@ -70,7 +84,8 @@ export function TabLinks({ items, 'aria-label': ariaLabel, className }: { items:
           key={item.to}
           to={item.to}
           end={item.end ?? false}
-          className={({ isActive }) => cn(TAB_CLASSES, isActive && TAB_SELECTED)}
+          {...(item.active === undefined ? {} : { 'aria-current': item.active ? 'page' : false })}
+          className={({ isActive }) => cn(TAB_CLASSES, (item.active ?? isActive) && TAB_SELECTED, itemClassName)}
         >
           {item.label}
         </NavLink>

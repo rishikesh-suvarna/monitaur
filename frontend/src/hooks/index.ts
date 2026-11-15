@@ -22,6 +22,13 @@ export {
   useUpdateServer,
 } from './api/servers';
 export { useAckIncident, useIncidents, useResolveIncident } from './api/incidents';
+export {
+  INCIDENT_PAGE_SIZE,
+  useIncidentPages,
+  type IncidentPageFilters,
+  type IncidentPages,
+  type IncidentPagesOptions,
+} from './api/incidentPages';
 export { useCreateRule, useDeleteRule, usePreviewRule, useRules, useUpdateRule } from './api/rules';
 export { useChannels, useCreateChannel, useDeleteChannel, useTestChannel, useUpdateChannel } from './api/channels';
 export { usePublicStatus } from './api/publicStatus';
@@ -29,6 +36,7 @@ export { usePublicStatus } from './api/publicStatus';
 // Live data and UI hooks
 export { STREAM_IDLE_TIMEOUT_MS, useLiveStream, type LiveConnectionState, type LiveStreamStatus } from './useLiveStream';
 export { useCopyToClipboard } from './useCopyToClipboard';
+export { INCIDENT_ACTIONS_DISABLED_REASON, useIncidentActions, type IncidentActions } from './useIncidentActions';
 export { DESKTOP_QUERY, useIsDesktop, useMediaQuery } from './useMediaQuery';
 export { useNow } from './useNow';
 export { ACKED_INCIDENTS, OPEN_INCIDENTS, useOpenIncidentCount } from './useOpenIncidentCount';

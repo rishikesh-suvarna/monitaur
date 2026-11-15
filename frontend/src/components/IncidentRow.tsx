@@ -6,7 +6,7 @@ import type { Incident } from '../api/types';
 import { useNow } from '../hooks/useNow';
 import { cn } from '../lib/cn';
 import { formatDayTime, formatDuration, toTime } from '../lib/format';
-import { incidentDurationSeconds, incidentPeak, incidentThreshold } from '../lib/incidents';
+import { incidentDurationSeconds, incidentPeak, incidentThreshold, resolvedHowLabel } from '../lib/incidents';
 import { incidentTitle, presentIncident } from '../lib/status';
 
 import { Button } from './Button';
@@ -20,13 +20,6 @@ const LEFT_BORDER = { crit: 'border-l-crit', warn: 'border-l-warn', off: 'border
 const PEAK_TEXT_CLASS = { crit: 'text-crit', warn: 'text-warn', off: 'text-off', resolved: 'text-ink-muted' } as const;
 const PERCENT_SCALE = 100;
 const RATE_HEADROOM = 1.2;
-
-const RESOLVED_HOW: Record<string, string> = {
-  auto: 'Auto-resolved',
-  manual: 'Resolved manually',
-  server_deleted: 'Server deleted',
-  rule_changed: 'Rule changed',
-};
 
 function ackedLabel(incident: Incident): string {
   const time = toTime(incident.acked_at);
@@ -146,7 +139,7 @@ export function IncidentRow({
               Resolve
             </Button>
           )}
-          {!open && <span className="text-[12px] text-ink-faint">{RESOLVED_HOW[incident.resolved_how ?? ''] ?? 'Resolved'}</span>}
+          {!open && <span className="text-[12px] text-ink-faint">{resolvedHowLabel(incident)}</span>}
           {onToggleExpanded && (
             <IconButton
               size="sm"
