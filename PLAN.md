@@ -416,8 +416,10 @@ Authorization and SQL safety are good. The weak spots are (1) the agent's WebSoc
 | 5 B2 | Done: metrics store, rollups, journal, flush window, `/series`, directory caches, legacy backfill job | `feat/platform-v2` |
 | 6 MT core | Done: verified-email gate, App Check (opt-in), rate limits, orgs, memberships, invites, plans and quotas, hashed tokens with rotation | `feat/platform-v2` |
 | 7 MT launch gate | Done in code: CORS/WS origin allowlist, invites, deletion and export. Ops left: SES sending domain (SPF/DKIM/DMARC) and SES account-level suppression list for bounces and complaints (chosen over a custom SNS webhook) | `feat/platform-v2`; ops checklist in the PR |
-| 8 UI redesign | In progress | `feat/frontend-redesign` |
+| 8 UI redesign | Done: every artboard (desktop, mobile, light) in TypeScript strict; verified full-stack with the Firebase Auth emulator, the real v2 backend and agent, and Chrome | `feat/frontend-redesign` |
 | 9 Features | F1 to F5, F8, F12 (tags, search) done. F6 is partial (network rates). F7, F9, F10 (beyond interval push), F11 and F13 onwards stay on the roadmap | section 4 |
+
+Full-stack verification (2026-11-15): sign-up with the verified-email gate, onboarding with a real agent, live overview over SSE, a UI-edited rule firing a real incident, ack, server detail charts with thresholds, a backend restart with automatic agent and stream reconnect, the status page, and a signed webhook delivering a real `fired` alert. It found and fixed three bugs (live agent version, status page uptime, incident paging).
 
 Small, focused PRs, rebase-merged, each on its own branch.
 
