@@ -1,195 +1,342 @@
 package client
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
+	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-type Client struct {
-	conn       *websocket.Conn
-	token      string
-	endpoint   string
-	serverName string
+const (
+	defaultPingInterval = 30 * time.Second
+	// Must exceed defaultPingInterval so a healthy but quiet link is not
+	// mistaken for a dead one. Any frame from the backend (pong, ping, data)
+	// extends the deadline.
+	defaultPongWait         = 60 * time.Second
+	defaultWriteWait        = 10 * time.Second
+	defaultHandshakeTimeout = 10 * time.Second
+	defaultMinBackoff       = 1 * time.Second
+	defaultMaxBackoff       = 60 * time.Second
+	// A session that lasted this long resets the backoff: a long-lived
+	// connection reconnects promptly after a blip, a flapping one backs off.
+	defaultStableAfter = 30 * time.Second
 
-	// Reconnection
-	reconnectInterval time.Duration
-	maxReconnectDelay time.Duration
-	reconnectAttempts int
-}
+	sendQueueSize = 64
+	// How long to wait for the backend to acknowledge our close frame.
+	closeGracePeriod = 1 * time.Second
+	closeReason      = "agent shutting down"
+)
 
+var (
+	ErrNotConnected = errors.New("not connected to monitoring server")
+	ErrQueueFull    = errors.New("send queue full")
+)
+
+// Message is the wire format the backend expects (backend/models.AgentMessage).
 type Message struct {
-	Type       string      `json:"type"`
-	Token      string      `json:"token"`
-	ServerName string      `json:"server_name"`
-	Data       interface{} `json:"data"`
-	Timestamp  time.Time   `json:"timestamp"`
+	Type       string    `json:"type"`
+	Token      string    `json:"token"`
+	ServerName string    `json:"server_name"`
+	Data       any       `json:"data"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
-func NewClient(endpoint, token, serverName string) *Client {
-	return &Client{
-		endpoint:          endpoint,
-		token:             token,
-		serverName:        serverName,
-		reconnectInterval: 5 * time.Second,
-		maxReconnectDelay: 60 * time.Second,
+type options struct {
+	pingInterval     time.Duration
+	pongWait         time.Duration
+	writeWait        time.Duration
+	handshakeTimeout time.Duration
+	minBackoff       time.Duration
+	maxBackoff       time.Duration
+	stableAfter      time.Duration
+}
+
+func defaultOptions() options {
+	return options{
+		pingInterval:     defaultPingInterval,
+		pongWait:         defaultPongWait,
+		writeWait:        defaultWriteWait,
+		handshakeTimeout: defaultHandshakeTimeout,
+		minBackoff:       defaultMinBackoff,
+		maxBackoff:       defaultMaxBackoff,
+		stableAfter:      defaultStableAfter,
 	}
 }
 
-func (c *Client) Connect() error {
-	u, err := url.Parse(c.endpoint)
+// Client streams messages to the backend over a single WebSocket.
+//
+// gorilla/websocket allows one concurrent reader and one concurrent writer per
+// connection. Run owns the connection: it is the only goroutine that writes,
+// and it starts exactly one reader per connection. Send* methods only enqueue,
+// so they are safe to call from any goroutine.
+type Client struct {
+	endpoint   *url.URL
+	token      string
+	serverName string
+	opts       options
+
+	send      chan []byte
+	connected atomic.Bool
+}
+
+// NewClient validates the endpoint up front so a typo in config.json fails at
+// startup instead of turning into an endless reconnect loop.
+func NewClient(endpoint, token, serverName string) (*Client, error) {
+	return newClient(endpoint, token, serverName, defaultOptions())
+}
+
+func newClient(endpoint, token, serverName string, opts options) (*Client, error) {
+	u, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("invalid endpoint URL: %w", err)
+		return nil, fmt.Errorf("invalid endpoint URL: %w", err)
+	}
+	if u.Scheme != "ws" && u.Scheme != "wss" {
+		return nil, fmt.Errorf("endpoint must use ws:// or wss://, got %q", endpoint)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("endpoint has no host: %q", endpoint)
 	}
 
-	// Add token as query parameter
 	q := u.Query()
-	q.Set("token", c.token)
-	q.Set("server_name", c.serverName)
+	q.Set("token", token)
+	q.Set("server_name", serverName)
 	u.RawQuery = q.Encode()
 
-	log.Printf("Connecting to %s", u.String())
-
-	dialer := websocket.DefaultDialer
-	dialer.HandshakeTimeout = 10 * time.Second
-
-	conn, resp, err := dialer.Dial(u.String(), nil)
-	if err != nil {
-		if resp != nil {
-			return fmt.Errorf("connection failed with status %d: %w", resp.StatusCode, err)
-		}
-		return fmt.Errorf("connection failed: %w", err)
-	}
-
-	c.conn = conn
-	c.reconnectAttempts = 0
-
-	log.Printf("Connected to monitoring server")
-	return nil
-}
-
-func (c *Client) SendMetrics(metrics interface{}) error {
-	if c.conn == nil {
-		return fmt.Errorf("not connected")
-	}
-
-	message := Message{
-		Type:       "metrics",
-		Token:      c.token,
-		ServerName: c.serverName,
-		Data:       metrics,
-		Timestamp:  time.Now(),
-	}
-
-	return c.conn.WriteJSON(message)
-}
-
-func (c *Client) SendAlert(alert interface{}) error {
-	if c.conn == nil {
-		return fmt.Errorf("not connected")
-	}
-
-	message := Message{
-		Type:       "alert",
-		Token:      c.token,
-		ServerName: c.serverName,
-		Data:       alert,
-		Timestamp:  time.Now(),
-	}
-
-	return c.conn.WriteJSON(message)
-}
-
-func (c *Client) Close() error {
-	if c.conn == nil {
-		return nil
-	}
-
-	// Send close message
-	closeMessage := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-	c.conn.WriteMessage(websocket.CloseMessage, closeMessage)
-
-	return c.conn.Close()
-}
-
-func (c *Client) StartHeartbeat() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if c.conn == nil {
-			continue
-		}
-
-		// Send ping
-		if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-			log.Printf("Heartbeat failed: %v", err)
-			c.handleDisconnection()
-			return
-		}
-	}
-}
-
-func (c *Client) handleDisconnection() {
-	log.Printf("Connection lost, attempting to reconnect...")
-
-	c.conn = nil
-	c.reconnectAttempts++
-
-	// Calculate backoff delay
-	delay := time.Duration(c.reconnectAttempts) * c.reconnectInterval
-	if delay > c.maxReconnectDelay {
-		delay = c.maxReconnectDelay
-	}
-
-	time.Sleep(delay)
-
-	if err := c.Connect(); err != nil {
-		log.Printf("Reconnection failed: %v", err)
-		go func() {
-			time.Sleep(delay)
-			c.handleDisconnection()
-		}()
-	} else {
-		go c.StartHeartbeat()
-	}
+	return &Client{
+		endpoint:   u,
+		token:      token,
+		serverName: serverName,
+		opts:       opts,
+		send:       make(chan []byte, sendQueueSize),
+	}, nil
 }
 
 func (c *Client) IsConnected() bool {
-	return c.conn != nil
+	return c.connected.Load()
 }
 
-// ListenForMessages handles incoming messages from server
-func (c *Client) ListenForMessages() {
-	if c.conn == nil {
+func (c *Client) SendMetrics(metrics any) error {
+	return c.enqueue("metrics", metrics)
+}
+
+func (c *Client) SendAlert(alert any) error {
+	return c.enqueue("alert", alert)
+}
+
+func (c *Client) enqueue(msgType string, data any) error {
+	if !c.connected.Load() {
+		return ErrNotConnected
+	}
+
+	payload, err := json.Marshal(Message{
+		Type:       msgType,
+		Token:      c.token,
+		ServerName: c.serverName,
+		Data:       data,
+		Timestamp:  time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal %s message: %w", msgType, err)
+	}
+
+	select {
+	case c.send <- payload:
+		return nil
+	default:
+		return ErrQueueFull
+	}
+}
+
+// Run keeps a connection to the backend open until ctx is cancelled,
+// redialling with jittered exponential backoff. It blocks, so call it in its
+// own goroutine.
+func (c *Client) Run(ctx context.Context) {
+	backoff := c.opts.minBackoff
+	for {
+		session, err := c.runSession(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if session >= c.opts.stableAfter {
+			backoff = c.opts.minBackoff
+		}
+
+		wait := jitter(backoff)
+		log.Printf("Connection to monitoring server lost: %v (reconnecting in %s)", err, wait.Round(time.Millisecond))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		backoff = min(backoff*2, c.opts.maxBackoff)
+	}
+}
+
+// runSession dials once and pumps messages until the connection fails or ctx
+// is cancelled. It returns how long the connection was up.
+func (c *Client) runSession(ctx context.Context) (time.Duration, error) {
+	conn, err := c.dial(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	start := time.Now()
+	c.connected.Store(true)
+	defer c.connected.Store(false)
+	log.Printf("Connected to monitoring server")
+
+	readDone := make(chan struct{})
+	var readErr error
+	go func() {
+		defer close(readDone)
+		readErr = c.readLoop(conn)
+	}()
+
+	writeErr := c.writeLoop(ctx, conn, readDone)
+
+	// Unblock the reader if it is still running, and wait for it so two
+	// readers never overlap across reconnects.
+	conn.Close()
+	<-readDone
+
+	if writeErr != nil {
+		return time.Since(start), writeErr
+	}
+	return time.Since(start), readErr
+}
+
+func (c *Client) dial(ctx context.Context) (*websocket.Conn, error) {
+	// Never log the query string: it carries the server token.
+	log.Printf("Connecting to %s://%s%s", c.endpoint.Scheme, c.endpoint.Host, c.endpoint.Path)
+
+	dialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: c.opts.handshakeTimeout,
+	}
+	conn, resp, err := dialer.DialContext(ctx, c.endpoint.String(), nil)
+	if err != nil {
+		if resp != nil {
+			if resp.StatusCode == http.StatusUnauthorized {
+				return nil, fmt.Errorf("server rejected the token (401), check \"token\" in config.json: %w", err)
+			}
+			return nil, fmt.Errorf("handshake failed with status %d: %w", resp.StatusCode, err)
+		}
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	return conn, nil
+}
+
+// writeLoop is the only place that writes data or pings to conn.
+func (c *Client) writeLoop(ctx context.Context, conn *websocket.Conn, readDone <-chan struct{}) error {
+	ticker := time.NewTicker(c.opts.pingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.closeGracefully(conn, readDone)
+			return ctx.Err()
+		case <-readDone:
+			return nil
+		case payload := <-c.send:
+			if err := c.write(conn, websocket.TextMessage, payload); err != nil {
+				return fmt.Errorf("write: %w", err)
+			}
+		case <-ticker.C:
+			if err := c.write(conn, websocket.PingMessage, nil); err != nil {
+				return fmt.Errorf("ping: %w", err)
+			}
+		}
+	}
+}
+
+func (c *Client) write(conn *websocket.Conn, messageType int, payload []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(c.opts.writeWait)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(messageType, payload)
+}
+
+func (c *Client) closeGracefully(conn *websocket.Conn, readDone <-chan struct{}) {
+	msg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, closeReason)
+	if err := conn.WriteControl(websocket.CloseMessage, msg, time.Now().Add(c.opts.writeWait)); err != nil {
+		return
+	}
+	select {
+	case <-readDone:
+	case <-time.After(closeGracePeriod):
+	}
+}
+
+// readLoop drains incoming frames so control frames (pings from the backend,
+// pongs to our pings) are processed, and treats silence longer than pongWait
+// as a dead connection.
+func (c *Client) readLoop(conn *websocket.Conn) error {
+	extend := func() error {
+		return conn.SetReadDeadline(time.Now().Add(c.opts.pongWait))
+	}
+	if err := extend(); err != nil {
+		return err
+	}
+
+	conn.SetPongHandler(func(string) error { return extend() })
+	// The default ping handler replies with a pong via WriteControl, which is
+	// safe to call concurrently with the writer goroutine.
+	replyPong := conn.PingHandler()
+	conn.SetPingHandler(func(appData string) error {
+		if err := extend(); err != nil {
+			return err
+		}
+		return replyPong(appData)
+	})
+
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return fmt.Errorf("read: %w", err)
+		}
+		if err := extend(); err != nil {
+			return err
+		}
+		handleServerMessage(data)
+	}
+}
+
+func handleServerMessage(data []byte) {
+	var message struct {
+		Type string `json:"type"`
+		Data any    `json:"data"`
+	}
+	if err := json.Unmarshal(data, &message); err != nil {
+		log.Printf("Ignoring malformed message from server: %v", err)
 		return
 	}
 
-	for {
-		var message map[string]interface{}
-		err := c.conn.ReadJSON(&message)
-		if err != nil {
-			log.Printf("Read error: %v", err)
-			c.handleDisconnection()
-			return
-		}
-
-		// Handle different message types
-		msgType, ok := message["type"].(string)
-		if !ok {
-			continue
-		}
-
-		switch msgType {
-		case "config_update":
-			log.Printf("Received config update: %v", message["data"])
-		case "command":
-			log.Printf("Received command: %v", message["data"])
-		default:
-			log.Printf("Unknown message type: %s", msgType)
-		}
+	switch message.Type {
+	case "config_update":
+		log.Printf("Received config update: %v", message.Data)
+	case "command":
+		log.Printf("Received command: %v", message.Data)
+	default:
+		log.Printf("Unknown message type: %s", message.Type)
 	}
+}
+
+// jitter returns a duration in [d/2, d] so agents that lost the backend at
+// the same moment do not all redial in lockstep.
+func jitter(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + rand.N(half+1)
 }
