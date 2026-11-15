@@ -10,7 +10,7 @@ import { presentIncident } from '../../lib/status';
 export const STATE_TABS = ['open', 'acked', 'resolved', 'all'] as const;
 export type StateTab = (typeof STATE_TABS)[number];
 
-export const TYPE_FILTERS = ['all', 'cpu', 'memory', 'disk', 'network', 'unreachable', 'uptime'] as const;
+export const TYPE_FILTERS = ['all', 'cpu', 'memory', 'disk', 'network', 'load', 'swap', 'unreachable', 'uptime'] as const;
 export type TypeFilter = (typeof TYPE_FILTERS)[number];
 
 export const TYPE_LABELS: Record<TypeFilter, string> = {
@@ -19,6 +19,8 @@ export const TYPE_LABELS: Record<TypeFilter, string> = {
   memory: 'Memory',
   disk: 'Disk',
   network: 'Network',
+  load: 'Load',
+  swap: 'Swap',
   unreachable: 'Unreachable',
   uptime: 'Uptime checks',
 };
@@ -29,6 +31,8 @@ const TYPE_METRICS: Record<Exclude<TypeFilter, 'all'>, readonly IncidentMetric[]
   memory: ['memory'],
   disk: ['disk'],
   network: ['net_in', 'net_out'],
+  load: ['load1'],
+  swap: ['swap'],
   unreachable: ['heartbeat'],
   uptime: ['http', 'tcp', 'tls', 'tls_expiry'],
 };

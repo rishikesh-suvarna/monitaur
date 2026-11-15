@@ -90,8 +90,13 @@ describe('check form validation', () => {
     expect(validateCheckForm(form({ intervalSeconds: 30, timeoutSeconds: 10 }), NO_LIMIT).interval).toBeUndefined();
   });
 
+  it('caps the timeout at what the backend accepts', () => {
+    expect(validateCheckForm(form({ intervalSeconds: 300, timeoutSeconds: 60 }), NO_LIMIT).timeout).toBe('Timeouts go up to 30 s.');
+    expect(validateCheckForm(form({ intervalSeconds: 300, timeoutSeconds: 30 }), NO_LIMIT).timeout).toBeUndefined();
+  });
+
   it('wants a timeout shorter than the interval', () => {
-    expect(validateCheckForm(form({ intervalSeconds: 60, timeoutSeconds: 60 }), FREE).timeout).toBe(
+    expect(validateCheckForm(form({ intervalSeconds: 30, timeoutSeconds: 30 }), NO_LIMIT).timeout).toBe(
       'The timeout must be shorter than the interval.',
     );
   });

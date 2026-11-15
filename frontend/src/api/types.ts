@@ -696,8 +696,8 @@ export interface MaintenanceWindow {
   scope: MaintenanceScope;
   starts_at: string;
   ends_at: string;
-  /** docs/platform-v2.md 6.4 does not type it: a user id or a display string. */
-  created_by: number | string | null;
+  /** Display name, else email, of the creator; null once that user is deleted. */
+  created_by: string | null;
   created_at: string;
   state: MaintenanceState;
 }

@@ -40,7 +40,9 @@ const MINUTE = 60;
 const HOUR = 60 * MINUTE;
 
 export const INTERVAL_PRESETS: readonly number[] = [30, MINUTE, 2 * MINUTE, 5 * MINUTE, 10 * MINUTE, 15 * MINUTE, 30 * MINUTE, HOUR];
-export const TIMEOUT_PRESETS: readonly number[] = [5, 10, 15, 30, MINUTE];
+/** The backend rejects longer timeouts (api/checks.go maxCheckTimeoutSeconds). */
+export const MAX_TIMEOUT_SECONDS = 30;
+export const TIMEOUT_PRESETS: readonly number[] = [5, 10, 15, MAX_TIMEOUT_SECONDS];
 export const DEFAULT_INTERVAL_SECONDS = MINUTE;
 export const DEFAULT_TIMEOUT_SECONDS = 10;
 
@@ -318,6 +320,7 @@ export function validateCheckForm(form: CheckForm, limits: CheckLimits): CheckFo
     errors.interval = `${plan} checks at most every ${formatInterval(limits.minIntervalSeconds)}.`;
   }
   if (form.timeoutSeconds <= 0) errors.timeout = 'Pick a timeout.';
+  else if (form.timeoutSeconds > MAX_TIMEOUT_SECONDS) errors.timeout = `Timeouts go up to ${formatInterval(MAX_TIMEOUT_SECONDS)}.`;
   else if (form.timeoutSeconds >= form.intervalSeconds) errors.timeout = 'The timeout must be shorter than the interval.';
   return errors;
 }

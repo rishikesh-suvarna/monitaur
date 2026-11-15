@@ -49,6 +49,8 @@ describe('toApiFilters', () => {
   it('maps types to the API metric, and unreachable to heartbeat', () => {
     expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'memory' })).toEqual({ state: 'open', metric: 'memory' });
     expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'unreachable' })).toEqual({ state: 'open', metric: 'heartbeat' });
+    expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'load' })).toEqual({ state: 'open', metric: 'load1' });
+    expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'swap' })).toEqual({ state: 'open', metric: 'swap' });
     // Uptime covers four check metrics, so it is filtered locally.
     expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'uptime' })).toEqual({ state: 'open' });
   });
