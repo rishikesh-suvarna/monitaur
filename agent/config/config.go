@@ -55,16 +55,35 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
-	if config.Token == "" {
-		return nil, fmt.Errorf("token is required in config.json")
-	}
-
 	// Use hostname as server name if not specified
 	if config.ServerName == "" {
 		config.ServerName = getHostname()
 	}
-
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
 	return &config, nil
+}
+
+const (
+	minCollectionInterval = 1
+	maxCollectionInterval = 86400 // one day
+)
+
+// validate fails fast on values that would otherwise crash later
+// (time.NewTicker panics on a non-positive interval).
+func (c *Config) validate() error {
+	if c.Token == "" {
+		return fmt.Errorf("token is required in config.json")
+	}
+	if c.CollectionInterval < minCollectionInterval || c.CollectionInterval > maxCollectionInterval {
+		return fmt.Errorf("collection_interval must be between %d and %d seconds, got %d",
+			minCollectionInterval, maxCollectionInterval, c.CollectionInterval)
+	}
+	if c.APIEndpoint == "" {
+		return fmt.Errorf("api_endpoint is required in config.json")
+	}
+	return nil
 }
 
 func getHostname() string {

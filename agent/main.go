@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 var (
 	Version = "dev" // Set during build
 )
+
+// displayVersion avoids "vv1.2.3": release builds inject the tag, which
+// already starts with "v".
+func displayVersion() string { return "v" + strings.TrimPrefix(Version, "v") }
 
 // systemd sends SIGKILL after TimeoutStopSec (90 s by default); stay well under it.
 const shutdownTimeout = 5 * time.Second
@@ -33,13 +38,13 @@ func main() {
 
 	// Show version
 	if *version {
-		fmt.Printf("Monitaur Agent v%s\n", Version)
+		fmt.Printf("Monitaur Agent %s\n", displayVersion())
 		return
 	}
 
 	// Show help
 	if *showHelp {
-		fmt.Printf("Monitaur Agent v%s\n\n", Version)
+		fmt.Printf("Monitaur Agent %s\n\n", displayVersion())
 		fmt.Println("Usage:")
 		fmt.Println("  monitaur-agent [options]")
 		fmt.Println("")
@@ -74,7 +79,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	log.Printf("Starting Monitaur Agent v%s for: %s", Version, cfg.ServerName)
+	log.Printf("Starting Monitaur Agent %s for: %s", displayVersion(), cfg.ServerName)
 	log.Printf("Collection interval: %d seconds", cfg.CollectionInterval)
 
 	// Initialize metrics collector
