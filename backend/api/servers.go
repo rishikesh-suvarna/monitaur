@@ -380,10 +380,12 @@ func (a *API) deleteServer(c *gin.Context) {
 // purgeServer drops every in-memory trace of a deleted server and closes its
 // agent connection, so the agent is rejected on reconnect.
 func (a *API) purgeServer(c *gin.Context, serverID int64) {
+	srv, _ := a.Dir.Server(serverID)
 	a.Dir.RemoveServer(serverID)
 	a.Metrics.Forget(serverID)
 	a.Engine.RemoveServer(c.Request.Context(), serverID)
 	a.Hub.Disconnect(serverID)
+	a.Broker.Publish(srv.OrgID, eventIncident, map[string]string{"action": "refresh"})
 }
 
 func (a *API) rotateToken(c *gin.Context) {

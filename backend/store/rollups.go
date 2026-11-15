@@ -291,4 +291,3 @@ func (s *Store) MarkJobDone(ctx context.Context, name string) error {
 
 // LegacyBackfillJob is the app_jobs name of the v1 rollup backfill.
 func LegacyBackfillJob() string { return legacyBackfillJob }
-

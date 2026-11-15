@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	inviteTTL            = 7 * 24 * time.Hour
-	invitesPerHour       = 20
-	invitesPerHourBurst  = 5
-	maxOrgNameLen        = 60
-	maxStatusTitleLen    = 80
-	minutesPerHour       = 60
-	inviteSendTimeout    = 20 * time.Second
+	inviteTTL           = 7 * 24 * time.Hour
+	invitesPerHour      = 20
+	invitesPerHourBurst = 5
+	maxOrgNameLen       = 60
+	maxStatusTitleLen   = 80
+	minutesPerHour      = 60
+	inviteSendTimeout   = 20 * time.Second
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,39}$`)
@@ -58,7 +58,7 @@ func orgJSON(o store.Org, role store.Role) gin.H {
 	return gin.H{
 		"id": o.ID, "name": o.Name, "slug": o.Slug, "plan_id": o.PlanID, "personal": o.Personal(), "role": role,
 		"status_page": gin.H{"enabled": sp.Enabled, "slug": o.Slug, "title": sp.Title, "server_ids": sp.ServerIDs},
-		"created_at": o.CreatedAt,
+		"created_at":  o.CreatedAt,
 	}
 }
 

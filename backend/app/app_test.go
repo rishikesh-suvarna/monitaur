@@ -34,10 +34,12 @@ func (fakeVerifier) VerifyIDToken(_ context.Context, token string) (auth.Claims,
 	}
 	return auth.Claims{UID: parts[0], Email: parts[1], Provider: parts[2], EmailVerified: parts[3] == "true", IssuedAt: time.Now()}, nil
 }
-func (fakeVerifier) TokensValidAfter(context.Context, string) (time.Time, error) { return time.Time{}, nil }
-func (fakeVerifier) RevokeSessions(context.Context, string) error             { return nil }
-func (fakeVerifier) DeleteUser(context.Context, string) error                 { return nil }
-func (fakeVerifier) VerifyAppCheck(string) error                              { return nil }
+func (fakeVerifier) TokensValidAfter(context.Context, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+func (fakeVerifier) RevokeSessions(context.Context, string) error { return nil }
+func (fakeVerifier) DeleteUser(context.Context, string) error     { return nil }
+func (fakeVerifier) VerifyAppCheck(string) error                  { return nil }
 
 type env struct {
 	t   *testing.T

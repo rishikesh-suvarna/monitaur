@@ -155,6 +155,9 @@ func (a *API) reloadOrgRules(ctx context.Context, orgID int64) error {
 	}
 	a.Dir.SetOrgRules(orgID, rules)
 	a.Engine.SetOrgRules(orgID, RulesToAlerting(rules))
+	// Changed or removed rules resolve their incidents without a notifier
+	// event; tell live clients to refetch.
+	a.Broker.Publish(orgID, eventIncident, map[string]string{"action": "refresh"})
 	return nil
 }
 
@@ -276,10 +279,10 @@ func (a *API) previewRule(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"matched_servers":  len(matched),
-		"previewed":        min(len(matched), previewMaxServers),
-		"would_fire":       len(incidents),
-		"incidents":        incidents,
-		"window_hours":     int(previewWindow / time.Hour),
+		"matched_servers": len(matched),
+		"previewed":       min(len(matched), previewMaxServers),
+		"would_fire":      len(incidents),
+		"incidents":       incidents,
+		"window_hours":    int(previewWindow / time.Hour),
 	})
 }

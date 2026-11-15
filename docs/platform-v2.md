@@ -457,7 +457,7 @@ interface Channel {
 
 SSE events (`text/event-stream`, one JSON object per `data:` line):
 - `event: servers` every 3 s: `{servers:[{id,status,connected,last_seen,latest}]}` for the org.
-- `event: incident`: `{action:'opened'|'updated'|'resolved', incident: Incident}`.
+- `event: incident`: `{action:'opened'|'updated'|'resolved', incident: Incident}`, or `{action:'refresh'}` after rule or server changes resolved incidents in bulk (refetch the incidents list).
 - `: ping` comment every 15 s.
 
 ---

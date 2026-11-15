@@ -197,8 +197,13 @@ func (a *App) housekeeping(ctx context.Context) {
 func (a *App) seedDefaults(ctx context.Context, org store.Org, ownerEmail string) {
 	a.seedMu.Lock()
 	defer a.seedMu.Unlock()
-	if current, ok := a.dir.Org(org.ID); ok && current.DefaultsSeeded {
+	current, ok := a.dir.Org(org.ID)
+	if ok && current.DefaultsSeeded {
 		return
+	}
+	if !ok {
+		// A brand-new org must be resolvable even if seeding fails below.
+		a.dir.PutOrg(org)
 	}
 	var channelIDs []int64
 	if a.cfg.SMTP.Enabled() && ownerEmail != "" {

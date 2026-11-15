@@ -405,6 +405,20 @@ Authorization and SQL safety are good. The weak spots are (1) the agent's WebSoc
 
 ## 6. Suggested execution order
 
+### Status (2026-11-15)
+
+| Step | State | Where |
+|---|---|---|
+| 1 Deploy ships | Done: broken path confirmed on the VM and fixed; actions pinned; journal dir | PR #2 `fix/backend-deploy-install` |
+| 2 Hotfixes | Done. Agent: PR #1, then `feat/agent-v2`. Backend items are built into v2 (the v1 handlers were replaced, so patching them first would have been throwaway) | PR #1, `feat/agent-v2`, `feat/platform-v2` |
+| 3 Foundations | Done: goose migrations, PR CI for agent, backend (with Postgres) and frontend | `fix/infra-hardening` (ci.yml), `feat/platform-v2` |
+| 4 Phase A | Done, folded into v2: no per-message writes, server-side alert state machine with F1, quiet logging, identity and role caches, incident indexes | `feat/platform-v2` |
+| 5 B2 | Done: metrics store, rollups, journal, flush window, `/series`, directory caches, legacy backfill job | `feat/platform-v2` |
+| 6 MT core | Done: verified-email gate, App Check (opt-in), rate limits, orgs, memberships, invites, plans and quotas, hashed tokens with rotation | `feat/platform-v2` |
+| 7 MT launch gate | Done in code: CORS/WS origin allowlist, invites, deletion and export. Ops left: SES sending domain (SPF/DKIM/DMARC) and SES account-level suppression list for bounces and complaints (chosen over a custom SNS webhook) | `feat/platform-v2`; ops checklist in the PR |
+| 8 UI redesign | In progress | `feat/frontend-redesign` |
+| 9 Features | F1 to F5, F8, F12 (tags, search) done. F6 is partial (network rates). F7, F9, F10 (beyond interval push), F11 and F13 onwards stay on the roadmap | section 4 |
+
 Small, focused PRs, rebase-merged, each on its own branch.
 
 Tracks: **B2** (the Neon bill) runs first, **MT** (multi-tenancy) second. Public sign-up stays closed (Firebase sign-up disabled) until step 7 is done.
