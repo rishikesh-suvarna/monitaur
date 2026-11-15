@@ -16,6 +16,7 @@ export function makeServer(overrides: Partial<ServerSummary> & Pick<ServerSummar
     spark: { cpu: [], mem: [], disk: [] },
     open_incidents: 0,
     created_at: '2026-11-01T00:00:00Z',
+    thresholds: {},
     ...overrides,
   };
 }
@@ -28,6 +29,7 @@ export function makeIncident(overrides: Partial<Incident> & Pick<Incident, 'id' 
     metric: 'cpu',
     severity: 'warning',
     state: 'open',
+    comparison: 'above',
     threshold: 80,
     peak: 90,
     last_value: 90,

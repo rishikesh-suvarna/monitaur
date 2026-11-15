@@ -142,7 +142,16 @@ export interface ServerSummary {
   spark: ServerSpark;
   open_incidents: number;
   created_at: string;
+  /**
+   * Lowest warning and critical threshold of the enabled "above" rules that
+   * apply to this server, keyed like `latest`. A metric without such a rule
+   * has no key; a severity without one is null.
+   */
+  thresholds: ServerThresholds;
 }
+
+/** ServerSummary.thresholds: keyed cpu, mem, disk, net_in, net_out. */
+export type ServerThresholds = Partial<Record<SeriesField, ThresholdPair>>;
 
 export interface ServersResponse {
   servers: ServerSummary[];
@@ -187,6 +196,8 @@ export interface UpdateServerBody {
 export interface RotateTokenResponse {
   token: string;
   previous_valid_until: string;
+  /** Not in section 4, but the backend sends the new agent config here (same shape as POST /servers). */
+  install?: InstallInstructions;
 }
 
 export interface SeriesPoint {
@@ -234,6 +245,8 @@ export interface Incident {
   metric: MetricKey;
   severity: Severity;
   state: IncidentState;
+  /** The rule's comparison: the incident opened when the value went above or below `threshold`. */
+  comparison: Comparison;
   threshold: number;
   peak: number;
   last_value: number;

@@ -74,13 +74,15 @@ export function formatThreshold(value: number, unit: MetricUnit): string {
 }
 
 /**
- * "Disk above 90%", "No heartbeat". The API's Incident has no comparison
- * field, so it is inferred: incidents open on a breach, so a peak at or over
- * the threshold means the rule was "above".
+ * "Disk above 90%", "No heartbeat". Uses the incident's comparison; without
+ * one (older payloads) it is inferred: incidents open on a breach, so a peak
+ * at or over the threshold means the rule was "above".
  */
-export function incidentTitle(incident: Pick<Incident, 'metric' | 'threshold' | 'peak' | 'unit'>): string {
+export function incidentTitle(
+  incident: Pick<Incident, 'metric' | 'threshold' | 'peak' | 'unit'> & Partial<Pick<Incident, 'comparison'>>,
+): string {
   if (incident.metric === 'heartbeat') return 'No heartbeat';
-  const comparison = incident.peak >= incident.threshold ? 'above' : 'below';
+  const comparison = incident.comparison ?? (incident.peak >= incident.threshold ? 'above' : 'below');
   return `${METRIC_LABELS[incident.metric]} ${comparison} ${formatThreshold(incident.threshold, incident.unit)}`;
 }
 
@@ -97,8 +99,8 @@ export type MetricBreaches = Partial<Record<FleetMetric, Severity>>;
 
 /**
  * Which overview metrics are over a threshold, per server, from active
- * incidents. ServerSummary carries no thresholds, so an open or acked incident
- * is the source of truth for "this value is over its rule".
+ * incidents. The fallback for metrics without an entry in
+ * ServerSummary.thresholds (see metricSeverity in components/serverMetrics).
  */
 export function breachesByServer(incidents: readonly Incident[]): Map<number, MetricBreaches> {
   const out = new Map<number, MetricBreaches>();

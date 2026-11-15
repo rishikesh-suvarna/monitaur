@@ -1,6 +1,7 @@
 import type { ServerSummary, Severity } from '../api/types';
 import { EMPTY_VALUE, formatMBps } from '../lib/format';
 import type { FleetMetric, MetricBreaches } from '../lib/status';
+import { hasThreshold, thresholdSeverity } from '../lib/thresholds';
 
 import type { SparkTone } from './Sparkline';
 
@@ -27,12 +28,27 @@ const toneForSeverity = (severity: Severity): SparkTone => (severity === 'critic
 /** Is this server's data frozen (agent not reporting)? Drawn at 55% with dashed lines. */
 export const isStale = (server: ServerSummary): boolean => server.status === 'offline';
 
-/** The three overview metric cells for a server, with threshold tone from active incidents. */
+/**
+ * How far over its rules a metric is right now. The server's own thresholds
+ * (ServerSummary.thresholds) decide when the metric has one; otherwise an
+ * active incident on that metric is the fallback.
+ */
+export function metricSeverity(
+  server: Pick<ServerSummary, 'thresholds' | 'latest'>,
+  key: FleetMetric,
+  breaches: MetricBreaches | undefined,
+): Severity | undefined {
+  const pair = server.thresholds[key];
+  if (hasThreshold(pair)) return thresholdSeverity(server.latest?.[key], pair) ?? undefined;
+  return breaches?.[key];
+}
+
+/** The three overview metric cells for a server, toned by its thresholds (or, without one, its active incidents). */
 export function metricCells(server: ServerSummary, breaches: MetricBreaches | undefined): MetricCell[] {
   const stale = isStale(server);
   return METRICS.map(({ key, label }) => {
     const value = server.latest?.[key] ?? null;
-    const severity = breaches?.[key];
+    const severity = metricSeverity(server, key, breaches);
     const over = severity !== undefined && !stale;
     return {
       key,
