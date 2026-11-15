@@ -474,6 +474,8 @@ export interface StreamServerUpdate {
   connected: boolean;
   last_seen: string | null;
   latest: ServerLatest | null;
+  /** Reported on connect, which can happen after the list was cached. */
+  agent_version?: string;
 }
 
 export interface ServersStreamEvent {

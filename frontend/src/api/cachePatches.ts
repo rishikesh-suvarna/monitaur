@@ -25,10 +25,12 @@ const sameLatest = (a: ServerSummary['latest'], b: ServerSummary['latest']): boo
   a === b || (a !== null && b !== null && a.at === b.at && a.cpu === b.cpu && a.mem === b.mem && a.disk === b.disk);
 
 function applyUpdate(server: ServerSummary, update: StreamServerUpdate): ServerSummary {
+  const agentVersion = update.agent_version ?? server.agent_version;
   if (
     server.status === update.status &&
     server.connected === update.connected &&
     server.last_seen === update.last_seen &&
+    server.agent_version === agentVersion &&
     sameLatest(server.latest, update.latest)
   ) {
     return server;
@@ -39,6 +41,7 @@ function applyUpdate(server: ServerSummary, update: StreamServerUpdate): ServerS
     connected: update.connected,
     last_seen: update.last_seen,
     latest: update.latest,
+    agent_version: agentVersion,
   };
 }
 

@@ -78,6 +78,17 @@ describe('servers cache patch', () => {
     ]);
     expect(next).toBe(current);
   });
+
+  it('picks up an agent version reported after the list was cached', () => {
+    const a = makeServer({ id: 1, name: 'a', agent_version: '' });
+    const current = { servers: [a] };
+    const live = { id: 1, status: a.status, connected: true, last_seen: a.last_seen, latest: a.latest };
+    const { next } = patchServersList(current, [{ ...live, agent_version: 'v2.0.0' }]);
+    expect(next.servers[0]?.agent_version).toBe('v2.0.0');
+    // Older backends omit the field: keep what the cache had.
+    const { next: kept } = patchServersList(next, [live]);
+    expect(kept.servers[0]?.agent_version).toBe('v2.0.0');
+  });
 });
 
 describe('incidents cache patch', () => {
