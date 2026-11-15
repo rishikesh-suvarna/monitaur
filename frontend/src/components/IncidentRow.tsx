@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { BellSlashIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -38,6 +38,17 @@ function SubjectLink({ subject, className }: { subject: IncidentSubject; classNa
     <Link to={to} className={className}>
       {subject.name}
     </Link>
+  );
+}
+
+/** F11: recorded during a maintenance window, so no channel was notified. */
+export function SilencedChip({ className }: { className?: string }) {
+  return (
+    <Chip className={className}>
+      <BellSlashIcon className="h-3 w-3" strokeWidth={1.8} aria-hidden="true" />
+      Silenced
+      <span className="sr-only"> by a maintenance window, nobody was notified</span>
+    </Chip>
   );
 }
 
@@ -110,6 +121,7 @@ export function IncidentRow({
             <StatusBadge status={look.status} size="sm" text={look.label} />
             <span className="font-semibold">{incidentTitle(incident)}</span>
             {incident.state === 'acked' && <Chip>{ackedLabel(incident)}</Chip>}
+            {incident.silenced && <SilencedChip />}
           </div>
           <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 text-[12px] text-ink-muted">
             <SubjectLink subject={subject} className="font-medium" />
@@ -219,6 +231,7 @@ export function IncidentCard({
           <span className="text-[13px] font-semibold">{incidentTitle(incident)}</span>
           <span className="truncate text-[12px] text-ink-muted">
             <SubjectLink subject={subject} className="text-ink-muted no-underline hover:text-ink" /> · <span className="num">{duration}</span>
+            {incident.silenced && <span> · silenced</span>}
           </span>
         </div>
         {acked ? <Chip>Acked</Chip> : ack}
@@ -230,6 +243,7 @@ export function IncidentCard({
     <div className={cn('flex flex-col gap-2 rounded-lg border border-l-[3px] border-line bg-surface-1 px-3.5 py-3', LEFT_BORDER[look.bar])}>
       <div className="flex items-center gap-2">
         <StatusBadge status={look.status} size="sm" text={look.label} />
+        {incident.silenced && <SilencedChip />}
         <span className="num ml-auto text-[12px] text-ink-faint">{duration}</span>
       </div>
       <div className="text-[13px] font-semibold">{incidentTitle(incident)}</div>

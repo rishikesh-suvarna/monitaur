@@ -53,13 +53,19 @@ export function IncidentDetails({ incident }: { incident: Incident }) {
           </span>
         )}
       </Row>
-      <Row term="Notified">{incident.notified_channels.length > 0 ? incident.notified_channels.join(', ') : 'nobody yet'}</Row>
+      <Row term="Notified">
+        {incident.silenced
+          ? 'nobody, silenced by a maintenance window'
+          : incident.notified_channels.length > 0
+            ? incident.notified_channels.join(', ')
+            : 'nobody yet'}
+      </Row>
       <Row term="Started">
         <time dateTime={incident.started_at} title={formatClock(incident.started_at)}>
           {formatDayTime(incident.started_at, now)}
         </time>
       </Row>
-      <Row term="Next notify">{nextNotifyLabel(incident, now)}</Row>
+      <Row term="Next notify">{incident.silenced && incident.state !== 'resolved' ? 'silenced' : nextNotifyLabel(incident, now)}</Row>
       <Row term="Duration">{incidentDurationLabel(incident, now)}</Row>
       {incident.state === 'acked' && (
         <Row term="Acknowledged">

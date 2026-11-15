@@ -10,7 +10,7 @@ export { Dino, type DinoBeatTone, type DinoMood } from './Dino';
 export { EmptyState } from './EmptyState';
 export { ErrorState, WifiOffIcon } from './ErrorState';
 export { IconButton, IconLink } from './IconButton';
-export { IncidentCard, IncidentRow } from './IncidentRow';
+export { IncidentCard, IncidentRow, SilencedChip } from './IncidentRow';
 export { Field, Input } from './Input';
 export { CONTROL_HEIGHTS, hintClasses, inputClasses, labelClasses, type ControlSize } from './inputClasses';
 export { Kbd } from './Kbd';

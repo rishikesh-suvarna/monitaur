@@ -1,3 +1,4 @@
+import { WrenchScrewdriverIcon } from '@heroicons/react/24/outline';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -14,9 +15,11 @@ import { TableRowsSkeleton } from '../../components/Skeletons';
 import { StatusIcon } from '../../components/StatusBadge';
 import { useIncidentPages } from '../../hooks/api/incidentPages';
 import { useIncidents } from '../../hooks/api/incidents';
+import { useMaintenanceWindows } from '../../hooks/api/maintenance';
 import { useServers } from '../../hooks/api/servers';
 import { useIncidentActions } from '../../hooks/useIncidentActions';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
+import { useNow } from '../../hooks/useNow';
 import { OPEN_INCIDENTS } from '../../hooks/useOpenIncidentCount';
 import { cn } from '../../lib/cn';
 
@@ -37,6 +40,8 @@ import {
   type StateTab,
 } from './filters';
 import { IncidentDetails } from './IncidentDetails';
+import { maintenanceState } from './maintenanceModel';
+import { MaintenanceView } from './MaintenanceView';
 
 /** Select value for "All servers"; server ids start at 1. */
 const ALL_SERVERS = 0;
@@ -50,7 +55,34 @@ const EMPTY_COPY: Record<StateTab, { title: string; description: string }> = {
   all: { title: 'No incidents yet', description: 'When a rule fires, the incident shows up here: one row per breach, not per sample.' },
 };
 
-function stateOptions(counts: IncidentCounts | undefined): SegmentOption<StateTab>[] {
+/** `?view=maintenance` swaps the incident list for the maintenance windows (F11). */
+const VIEW_PARAM = 'view';
+const MAINTENANCE_VIEW = 'maintenance';
+type HeaderTab = StateTab | typeof MAINTENANCE_VIEW;
+
+const maintenanceLabel = (activeWindows: number | null): string =>
+  activeWindows ? `Maintenance windows, ${activeWindows} active` : 'Maintenance windows';
+
+function MaintenanceIcon() {
+  return <WrenchScrewdriverIcon className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />;
+}
+
+function ActiveCount({ value }: { value: number | null }) {
+  return value ? <span className="num text-accent">{value}</span> : null;
+}
+
+/** Desktop: Maintenance is a fifth segment beside the incident states. */
+function maintenanceOption(activeWindows: number | null): SegmentOption<HeaderTab> {
+  return {
+    value: MAINTENANCE_VIEW,
+    label: 'Maintenance',
+    icon: <MaintenanceIcon />,
+    suffix: <ActiveCount value={activeWindows} />,
+    'aria-label': maintenanceLabel(activeWindows),
+  };
+}
+
+function stateOptions(counts: IncidentCounts | undefined): SegmentOption<HeaderTab>[] {
   const count = (value: number | undefined) =>
     value === undefined ? null : <span className="num text-ink-faint">{value}</span>;
   return [
@@ -132,16 +164,34 @@ export default function AlertsPage() {
   const desktop = useIsDesktop();
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => parseFilters(params), [params]);
+  const maintenance = params.get(VIEW_PARAM) === MAINTENANCE_VIEW;
+  const now = useNow();
+  const windows = useMaintenanceWindows();
+  const activeWindows = windows.data ? windows.data.windows.filter((window) => maintenanceState(window, now) === 'active').length : null;
   const [expanded, setExpanded] = useState<number | null>(null);
   const servers = useServers();
   const sidebarOpen = useIncidents(OPEN_INCIDENTS);
   const matchable = canMatch(filters);
-  const pages = useIncidentPages(toApiFilters(filters), { enabled: matchable });
+  const pages = useIncidentPages(toApiFilters(filters), { enabled: matchable && !maintenance });
   const counts = pages.counts ?? sidebarOpen.data?.counts;
   const filtered = isFiltered(filters);
 
   const update = (patch: Partial<AlertFilters>): void => {
     setParams((current) => writeFilters(current, { ...filters, ...patch }), { replace: true });
+  };
+  const selectTab = (tab: HeaderTab): void => {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (tab === MAINTENANCE_VIEW) {
+          next.set(VIEW_PARAM, MAINTENANCE_VIEW);
+          return next;
+        }
+        next.delete(VIEW_PARAM);
+        return writeFilters(next, { ...filters, state: tab });
+      },
+      { replace: true },
+    );
   };
   const clearFilters = (): void => {
     update({ severities: DEFAULT_FILTERS.severities, type: DEFAULT_FILTERS.type, serverId: DEFAULT_FILTERS.serverId });
@@ -227,76 +277,95 @@ export default function AlertsPage() {
         )}
       >
         <h1 className={cn('m-0 flex-1 font-semibold', desktop ? 'text-h2' : 'text-[18px] leading-6')}>Alerts</h1>
-        <SegmentedControl<StateTab>
-          aria-label="Incident state"
-          value={filters.state}
-          onChange={(state) => {
-            update({ state });
-          }}
-          options={stateOptions(counts)}
+        {/* 390 px has no room for a fifth segment, so Maintenance sits beside the title there. */}
+        {!desktop && (
+          <ChipButton
+            size="touch"
+            pressed={maintenance}
+            aria-label={maintenanceLabel(activeWindows)}
+            onClick={() => {
+              selectTab(maintenance ? filters.state : MAINTENANCE_VIEW);
+            }}
+          >
+            <MaintenanceIcon />
+            Maintenance
+            <ActiveCount value={activeWindows} />
+          </ChipButton>
+        )}
+        <SegmentedControl<HeaderTab>
+          aria-label={desktop ? 'Incident state or maintenance' : 'Incident state'}
+          value={maintenance ? MAINTENANCE_VIEW : filters.state}
+          onChange={selectTab}
+          options={desktop ? [...stateOptions(counts), maintenanceOption(activeWindows)] : stateOptions(counts)}
           size={desktop ? 'md' : 'touch'}
         />
       </header>
 
-      <div className={cn('flex flex-col gap-4', desktop ? 'px-8 pb-12 pt-5' : 'px-3 pb-4 pt-3')}>
-        <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-2">
-          {SEVERITIES.map((severity) => (
-            <ChipButton
-              key={severity}
-              size={desktop ? 'lg' : 'touch'}
-              pressed={filters.severities.includes(severity)}
-              onClick={() => {
-                toggleSeverity(severity);
-              }}
-            >
-              <StatusIcon status={severity} size={12} className={SEVERITY_ICON_CLASS[severity]} />
-              {SEVERITY_LABELS[severity]}
-            </ChipButton>
-          ))}
-          <Select<string>
-            label="Type"
-            hideLabel
-            size={desktop ? 'sm' : 'md'}
-            value={filters.type}
-            options={typeOptions}
-            onChange={(type) => {
-              update({ type: TYPE_FILTERS.find((item) => item === type) ?? 'all' });
-            }}
-          />
-          <Select<number>
-            label="Server"
-            hideLabel
-            size={desktop ? 'sm' : 'md'}
-            value={filters.serverId ?? ALL_SERVERS}
-            options={serverOptions}
-            onChange={(serverId) => {
-              update({ serverId: serverId === ALL_SERVERS ? null : serverId });
-            }}
-            className="max-w-[260px]"
-          />
-          {filtered && (
-            <Button size="sm" variant="ghost" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          )}
-          <span className="flex-1" />
-          {desktop && <span className="text-[12px] text-ink-faint">Grouped by incident: a breach that lasts 40 min is one row, not 480 samples.</span>}
+      {maintenance ? (
+        <div className={cn('flex flex-col gap-4', desktop ? 'px-8 pb-12 pt-5' : 'px-3 pb-4 pt-3')}>
+          <MaintenanceView compact={!desktop} />
         </div>
-
-        {pages.error !== null && pages.incidents.length > 0 && (
-          <ErrorState variant="widget" error={pages.error} title="Couldn’t refresh incidents. Showing what we have." onRetry={pages.refetch} retrying={pages.isFetching} />
-        )}
-
-        {body}
-
-        {matchable && pages.hasMore && (
-          <div className="flex justify-center">
-            <Button onClick={pages.loadMore} loading={pages.loadingMore}>
-              Load older incidents
-            </Button>
+      ) : (
+        <div className={cn('flex flex-col gap-4', desktop ? 'px-8 pb-12 pt-5' : 'px-3 pb-4 pt-3')}>
+          <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-2">
+            {SEVERITIES.map((severity) => (
+              <ChipButton
+                key={severity}
+                size={desktop ? 'lg' : 'touch'}
+                pressed={filters.severities.includes(severity)}
+                onClick={() => {
+                  toggleSeverity(severity);
+                }}
+              >
+                <StatusIcon status={severity} size={12} className={SEVERITY_ICON_CLASS[severity]} />
+                {SEVERITY_LABELS[severity]}
+              </ChipButton>
+            ))}
+            <Select<string>
+              label="Type"
+              hideLabel
+              size={desktop ? 'sm' : 'md'}
+              value={filters.type}
+              options={typeOptions}
+              onChange={(type) => {
+                update({ type: TYPE_FILTERS.find((item) => item === type) ?? 'all' });
+              }}
+            />
+            <Select<number>
+              label="Server"
+              hideLabel
+              size={desktop ? 'sm' : 'md'}
+              value={filters.serverId ?? ALL_SERVERS}
+              options={serverOptions}
+              onChange={(serverId) => {
+                update({ serverId: serverId === ALL_SERVERS ? null : serverId });
+              }}
+              className="max-w-[260px]"
+            />
+            {filtered && (
+              <Button size="sm" variant="ghost" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            )}
+            <span className="flex-1" />
+            {desktop && <span className="text-[12px] text-ink-faint">Grouped by incident: a breach that lasts 40 min is one row, not 480 samples.</span>}
           </div>
-        )}
-      </div>
+
+          {pages.error !== null && pages.incidents.length > 0 && (
+            <ErrorState variant="widget" error={pages.error} title="Couldn’t refresh incidents. Showing what we have." onRetry={pages.refetch} retrying={pages.isFetching} />
+          )}
+
+          {body}
+
+          {matchable && pages.hasMore && (
+            <div className="flex justify-center">
+              <Button onClick={pages.loadMore} loading={pages.loadingMore}>
+                Load older incidents
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
