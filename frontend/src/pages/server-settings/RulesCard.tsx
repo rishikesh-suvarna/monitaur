@@ -12,7 +12,6 @@ import { useToast } from '../../components/toastContext';
 import { Toggle } from '../../components/Toggle';
 import { useChannels } from '../../hooks/api/channels';
 import { useRules, useUpdateRule } from '../../hooks/api/rules';
-import { cn } from '../../lib/cn';
 
 import { channelNames, describeRule, newRulePath, ruleEditPath, rulesForServer, scopeReason } from './ruleScope';
 
@@ -79,10 +78,10 @@ export function RulesCard({ server, canEdit }: { server: ServerSummary; canEdit:
             return (
               <li key={rule.id} className="flex items-center gap-3 border-t border-line px-5 py-3 transition-colors duration-150 ease-out hover:bg-surface-2">
                 <StatusBadge status={rule.severity === 'critical' ? 'critical' : 'warning'} variant="icon" />
-                <div className={cn('flex min-w-0 flex-1 flex-col gap-0.5', !enabled && 'opacity-60')}>
+                {/* ServerSettings.dc.html keeps a disabled rule at full ink; its switch shows the state. */}
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <Link to={ruleEditPath(rule.id)} className="text-[13px] font-medium text-ink no-underline hover:underline">
                     {title}
-                    {!enabled && <span className="ml-2 text-[12px] font-normal text-ink-faint">(off)</span>}
                   </Link>
                   <span className="num text-[12px] text-ink-faint">
                     {scopeReason(rule.scope, server)} · {channelNames(rule, channels.data?.channels)}

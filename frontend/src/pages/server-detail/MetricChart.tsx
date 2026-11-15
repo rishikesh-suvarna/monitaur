@@ -17,10 +17,13 @@ import { cn } from '../../lib/cn';
 import { formatTimeOfDay } from '../../lib/format';
 
 import {
+  CHART_MARGIN_TOP,
+  chartBoxHeight,
   formatTick,
   placeThresholdLabels,
   quarterTicks,
   timeTicks,
+  X_AXIS_HEIGHT,
   type ChartRow,
   type ChartSpec,
   type LabelPlacement,
@@ -47,7 +50,6 @@ const REFERENCE_COLOR = MUTED_INK;
 const REFERENCE_DASH = '2 3';
 
 const Y_AXIS_WIDTH = 36;
-const X_AXIS_HEIGHT = 20;
 const TICK_COUNT = 6;
 const COMPACT_TICK_COUNT = 3;
 const LINE_WIDTH = 1.6;
@@ -56,7 +58,6 @@ const ACTIVE_DOT_RADIUS = 4;
 const STALE_AREA_OPACITY = 0.06;
 const HATCH_SIZE = 8;
 const LABEL_OFFSET = 4;
-const CHART_MARGIN_TOP = 6;
 /** The "no heartbeat since" note needs this much hatched width to fit. */
 const OFFLINE_NOTE_MIN_WIDTH = 170;
 /** Paint a surface-coloured halo behind labels so they stay legible over lines (the design's label background). */
@@ -103,6 +104,7 @@ export interface MetricChartProps {
   /** Show the "no heartbeat since" note on this chart (the first one only). */
   offlineLabel: boolean;
   syncId: string;
+  /** Plot height in px, without the time axis. */
   height: number;
   /** 390 px layout: no y axis, three time labels. */
   compact: boolean;
@@ -153,7 +155,7 @@ export const MetricChart = memo(function MetricChart({
   // their labels over each other or off the chart; place each above or below its line.
   const placements = placeThresholdLabels(
     spec.thresholds.map((line) => line.value),
-    { max: spec.max, top: CHART_MARGIN_TOP, height: height - CHART_MARGIN_TOP - X_AXIS_HEIGHT, labelHeight: fontSize, gap: LABEL_OFFSET },
+    { max: spec.max, top: CHART_MARGIN_TOP, height, labelHeight: fontSize, gap: LABEL_OFFSET },
   );
 
   const thresholdLabel =
@@ -237,7 +239,7 @@ export const MetricChart = memo(function MetricChart({
   };
 
   return (
-    <div style={{ height }} className={cn('min-w-0', stale && 'opacity-90')}>
+    <div style={{ height: chartBoxHeight(height) }} className={cn('min-w-0', stale && 'opacity-90')}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart
           data={rows as ChartRow[]}

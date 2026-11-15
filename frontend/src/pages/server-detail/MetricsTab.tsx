@@ -19,6 +19,7 @@ import { oneOf, STORAGE_KEYS } from '../../lib/storage';
 import { AlertHistory } from './AlertHistory';
 import {
   buildChartSpecs,
+  chartBoxHeight,
   compactUnitHint,
   findGaps,
   formatGap,
@@ -274,7 +275,7 @@ function ChartsSkeleton({ desktop, layout }: { desktop: boolean; layout: ChartLa
   const cells = Array.from({ length: SKELETON_CHARTS }, (_, index) => (
     <div key={index} className="flex flex-col gap-2.5 bg-surface-1 px-4 pb-3 pt-3.5">
       <Skeleton className="h-3 w-20" />
-      <Skeleton style={{ height }} />
+      <Skeleton style={{ height: chartBoxHeight(height) }} />
     </div>
   ));
   return (
@@ -393,15 +394,17 @@ export function MetricsTab({ server, desktop }: MetricsTabProps) {
         )}
       </div>
 
-      <div className={cn('grid gap-3', desktop ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2 gap-2')}>
+      <div className={cn('grid grid-cols-2', desktop ? 'gap-3 lg:grid-cols-4' : 'gap-2')}>
         {cards.map((card) => {
           const footnote = desktop ? card.detail : card.footnote;
+          // ServerDetailMobile.dc.html: "%" sits in the value itself, and a rate's unit only in its footnote.
+          const value = desktop || card.unit !== '%' || card.value === EMPTY_VALUE ? card.value : `${card.value}%`;
           return (
             <MetricCard
               key={card.key}
               label={desktop ? card.label : card.shortLabel}
-              value={card.value}
-              unit={card.unit}
+              value={value}
+              {...(desktop ? { unit: card.unit } : {})}
               {...(card.alert ? { alert: card.alert } : {})}
               {...(desktop && card.stats ? { stats: card.stats } : {})}
               statsVariant="chips"

@@ -98,7 +98,6 @@ export function ConfirmDialog({
                 autoComplete="off"
                 spellCheck={false}
                 data-autofocus
-                placeholder={confirmText}
                 aria-describedby={`${inputId}-match`}
                 className={cn(inputClasses('lg'), 'num', matches && typed !== '' && 'border-ok')}
               />

@@ -605,3 +605,14 @@ export function valueSeverity(value: number | null, field: SeriesField, lines: r
   }
   return worst;
 }
+
+export const X_AXIS_HEIGHT = 20;
+export const CHART_MARGIN_TOP = 6;
+
+/**
+ * The boards size the plot (132/150/110) and put the time labels in a row
+ * under it, so the chart box is the plot plus its top margin and the axis.
+ */
+export function chartBoxHeight(plotHeight: number): number {
+  return plotHeight + CHART_MARGIN_TOP + X_AXIS_HEIGHT;
+}

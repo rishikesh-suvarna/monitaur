@@ -12,12 +12,12 @@ export interface TimeRangePickerProps {
   className?: string;
 }
 
-/** Components.dc.html TimeRangePicker: Live (with a pulsing dot) to 30d. */
+/** Components.dc.html TimeRangePicker: Live (with a pulsing dot) to 30d. The 390 px board drops the dot. */
 export function TimeRangePicker({ value, onChange, size = 'md', className }: TimeRangePickerProps) {
   const options: SegmentOption<SeriesRange>[] = TIME_RANGES.map((range) => ({
     value: range,
     label: RANGE_LABELS[range],
-    ...(range === 'live' ? { icon: <LiveDot size={8} tone="ok" /> } : {}),
+    ...(range === 'live' && size !== 'touch' ? { icon: <LiveDot size={8} tone="ok" /> } : {}),
   }));
   return (
     <SegmentedControl

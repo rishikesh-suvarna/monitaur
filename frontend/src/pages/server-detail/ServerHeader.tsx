@@ -193,7 +193,8 @@ function ServerTabs({ server, tab, touch }: { server: ServerSummary; tab: Server
       aria-label="Server sections"
       // Four tabs at 390 px: a little less air between them so "12 open" still fits on one line.
       // Important: cn is clsx, and .gap-6 (TabLinks' default) comes later in the CSS than .gap-5.
-      className={touch ? '!gap-5' : 'mt-1'}
+      // The detail board drops the tabs 4 px; the settings board does not.
+      className={touch ? '!gap-5' : tab === 'settings' ? undefined : 'mt-1'}
       itemClassName={touch ? 'h-11 whitespace-nowrap' : undefined}
       items={[
         { to: serverDetailPath(server.id), label: 'Metrics', active: tab === 'metrics' },
@@ -259,9 +260,10 @@ export function ServerHeader({ server, tab, desktop }: ServerHeaderProps) {
     const back = settings ? { to: serverDetailPath(server.id), label: 'Back to server' } : { to: '/', label: 'Back to overview' };
     return (
       <header className="flex flex-col gap-2.5 border-b border-line bg-surface-1 px-4 pt-2">
-        <div className="-ml-3 flex items-center gap-1">
+        {/* ServerSettings.dc.html (compact): the badge follows the name 12 px later instead of sitting at the far edge. */}
+        <div className={cn('-ml-3 flex items-center', settings ? 'gap-3' : 'gap-1')}>
           <IconLink to={back.to} aria-label={back.label} size="touch" icon={<ChevronLeftIcon className="h-5 w-5" strokeWidth={1.8} />} />
-          <h1 className="num m-0 min-w-0 flex-1 text-[18px] font-semibold leading-6 [overflow-wrap:anywhere]">{server.name}</h1>
+          <h1 className={cn('num m-0 min-w-0 text-[18px] font-semibold leading-6 [overflow-wrap:anywhere]', !settings && 'flex-1')}>{server.name}</h1>
           {settings ? <StatusBadge status={server.status} /> : <MoreMenu server={server} touch onTogglePin={pin.toggle} />}
         </div>
         {!settings && (
@@ -290,7 +292,7 @@ export function ServerHeader({ server, tab, desktop }: ServerHeaderProps) {
   }
 
   return (
-    <header className="flex flex-col gap-3.5 border-b border-line px-8 pt-5">
+    <header className={cn('flex flex-col border-b border-line px-8 pt-5', settings ? 'gap-3' : 'gap-3.5')}>
       <nav aria-label="Breadcrumb" className="text-[13px] text-ink-faint">
         <Link to="/" className="text-ink-muted">
           Overview
@@ -298,18 +300,16 @@ export function ServerHeader({ server, tab, desktop }: ServerHeaderProps) {
         <span aria-hidden="true">/</span>{' '}
         {settings ? (
           <>
-            <Link to={serverDetailPath(server.id)} className="num text-ink-muted">
+            <Link to={serverDetailPath(server.id)} className="text-ink-muted">
               {server.name}
             </Link>{' '}
             <span aria-hidden="true">/</span> <span aria-current="page">Settings</span>
           </>
         ) : (
-          <span aria-current="page" className="num">
-            {server.name}
-          </span>
+          <span aria-current="page">{server.name}</span>
         )}
       </nav>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+      <div className={cn('flex flex-wrap items-center gap-y-3', settings ? 'gap-x-3' : 'gap-x-4')}>
         <h1 className="num m-0 min-w-0 text-h1 font-semibold [overflow-wrap:anywhere]">{server.name}</h1>
         <StatusBadge status={server.status} />
         {server.maintenance && <MaintenanceBadge size="md" interactive />}
