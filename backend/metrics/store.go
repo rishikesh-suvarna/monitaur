@@ -158,11 +158,18 @@ type serverState struct {
 	lastT   int64 // unix nanos of the last accepted sample
 	lastRx  uint64
 	lastTx  uint64
-	latest  Latest
+	// Disk IO counters of the last accepted sample, valid when lastExt.
+	lastExt   bool
+	lastRead  uint64
+	lastWrite uint64
+	// Interface counters of the last accepted sample (at most MaxInterfaces),
+	// the base for Latest's per-interface rates. Never shared, so reused.
+	lastIfaces []IfaceCounters
+	latest     Latest
 
-	raw    ring[rawPoint]
-	recent ring[cbucket] // closed minute buckets
-	hours  ring[cbucket] // closed hour buckets, so 7d/30d see hours not yet flushed
+	raw    extRing[rawPoint, xpoint]
+	recent extRing[cbucket, xbucket] // closed minute buckets
+	hours  extRing[cbucket, xbucket] // closed hour buckets, so 7d/30d see hours not yet flushed
 
 	minute agg
 	hour   agg
@@ -225,9 +232,9 @@ func (s *Store) now() time.Time {
 func (s *Store) newState(id int64) *serverState {
 	return &serverState{
 		id:               id,
-		raw:              newRing[rawPoint](s.rawCap),
-		recent:           newRing[cbucket](s.recentCap),
-		hours:            newRing[cbucket](s.hourCap),
+		raw:              newExtRing[rawPoint, xpoint](s.rawCap),
+		recent:           newExtRing[cbucket, xbucket](s.recentCap),
+		hours:            newExtRing[cbucket, xbucket](s.hourCap),
 		lastClosedMinute: noMinute,
 		lastClosedHour:   noMinute,
 		memFrom:          s.startMinute + 1,
@@ -281,6 +288,7 @@ func (s *Store) Ingest(serverID int64, smp Sample, minInterval time.Duration) (P
 	if err := validateSample(&smp); err != nil {
 		return Point{}, err
 	}
+	validateExtended(&smp)
 	st, err := s.stateFor(serverID)
 	if err != nil {
 		return Point{}, err
@@ -317,13 +325,29 @@ func (s *Store) Ingest(serverID int64, smp Sample, minInterval time.Duration) (P
 		p.in = counterRate(smp.NetRxTotal, st.lastRx, elapsed)
 		p.out = counterRate(smp.NetTxTotal, st.lastTx, elapsed)
 	}
+	var x xpoint
+	if smp.Extended {
+		x = xpoint{ok: true, load1: float32(smp.Load1), swap: float32(smp.SwapPercent)}
+		// Only a previous extended sample has disk counters to diff against;
+		// the first sample after an agent upgrade reports 0, like net does.
+		if st.hasLast && st.lastExt {
+			x.read = counterRate(smp.DiskReadTotal, st.lastRead, elapsed)
+			x.write = counterRate(smp.DiskWriteTotal, st.lastWrite, elapsed)
+		}
+	}
 
-	st.raw.push(p)
-	closed := st.observe(p, &smp)
+	st.raw.push(p, x, x.ok)
+	closed := st.observe(p, x, &smp)
 
+	var ifaces []Iface
+	if smp.Interfaces != nil {
+		ifaces = ifaceRates(smp.Interfaces, st.lastIfaces, elapsed)
+	}
 	st.hasLast, st.lastT, st.lastRx, st.lastTx = true, tn, smp.NetRxTotal, smp.NetTxTotal
+	st.lastExt, st.lastRead, st.lastWrite = smp.Extended, smp.DiskReadTotal, smp.DiskWriteTotal
+	st.lastIfaces = append(st.lastIfaces[:0], smp.Interfaces...)
 	st.latest = Latest{
-		Point:          p.point(),
+		Point:          p.point(x),
 		CPUCores:       smp.CPUCores,
 		MemTotalBytes:  smp.MemTotalBytes,
 		MemUsedBytes:   smp.MemUsedBytes,
@@ -331,6 +355,14 @@ func (s *Store) Ingest(serverID int64, smp Sample, minInterval time.Duration) (P
 		DiskUsedBytes:  smp.DiskUsedBytes,
 		UptimeSeconds:  smp.UptimeSeconds,
 		ReceivedAt:     now,
+		// A fresh copy per sample: readers keep the previous one, so a
+		// published slice is never written again.
+		Mounts:     sanitizeMounts(smp.Mounts),
+		Interfaces: ifaces,
+	}
+	if smp.Extended {
+		st.latest.Load5, st.latest.Load15 = float32(smp.Load5), float32(smp.Load15)
+		st.latest.SwapTotalBytes, st.latest.SwapUsedBytes = smp.SwapTotalBytes, smp.SwapUsedBytes
 	}
 	if len(closed) > 0 {
 		s.enqueue(closed)
@@ -388,9 +420,72 @@ func counterRate(cur, prev uint64, elapsed time.Duration) float32 {
 	return float32(float64(cur-prev) / elapsed.Seconds())
 }
 
+// validateExtended checks the F6 values. Unlike a bad base value, a bad
+// extended value does not reject the sample: the base reading is still good,
+// so only the extended part is dropped and the sample counts as one from an
+// older agent. The lists are bounded here too, whatever the caller did, so
+// the per-server memory stays fixed.
+func validateExtended(smp *Sample) {
+	if len(smp.Interfaces) > MaxInterfaces {
+		smp.Interfaces = smp.Interfaces[:MaxInterfaces]
+	}
+	if len(smp.Mounts) > MaxMounts {
+		smp.Mounts = smp.Mounts[:MaxMounts]
+	}
+	ok := smp.Extended && validLoad(smp.Load1) && validLoad(smp.Load5) && validLoad(smp.Load15)
+	if ok {
+		swap, err := checkPercent("swap_percent", smp.SwapPercent)
+		ok, smp.SwapPercent = err == nil, swap
+	}
+	if !ok {
+		smp.Extended = false
+		smp.Load1, smp.Load5, smp.Load15, smp.SwapPercent = 0, 0, 0, 0
+		smp.SwapTotalBytes, smp.SwapUsedBytes, smp.DiskReadTotal, smp.DiskWriteTotal = 0, 0, 0, 0
+	}
+}
+
+func validLoad(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
+}
+
+// sanitizeMounts copies the agent's mounts with percentages clamped to
+// [0, 100]. It never writes to the caller's slice.
+func sanitizeMounts(in []Mount) []Mount {
+	if in == nil {
+		return nil
+	}
+	out := slices.Clone(in)
+	for i := range out {
+		v := float64(out[i].UsedPercent)
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			v = 0
+		}
+		out[i].UsedPercent = float32(min(max(v, 0), maxPercent))
+	}
+	return out
+}
+
+// ifaceRates turns per-interface counters into rates against the previous
+// sample's counters, matched by name. An interface that is new (or the
+// first sample) reports 0; a counter that went backwards is clamped to 0.
+func ifaceRates(cur, prev []IfaceCounters, elapsed time.Duration) []Iface {
+	out := make([]Iface, len(cur))
+	for i, c := range cur {
+		out[i].Name = c.Name
+		for _, p := range prev {
+			if p.Name == c.Name {
+				out[i].InBps = counterRate(c.RxTotal, p.RxTotal, elapsed)
+				out[i].OutBps = counterRate(c.TxTotal, p.TxTotal, elapsed)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // observe adds a point to the open minute, closing the previous minute first
 // when the point belongs to a later one. Returns buckets that closed.
-func (st *serverState) observe(p rawPoint, smp *Sample) []Bucket {
+func (st *serverState) observe(p rawPoint, x xpoint, smp *Sample) []Bucket {
 	m := minuteOfNanos(p.t)
 	var closed []Bucket
 	if st.minute.open && m > st.minute.start {
@@ -404,7 +499,7 @@ func (st *serverState) observe(p rawPoint, smp *Sample) []Bucket {
 	if !st.minute.open {
 		st.minute.begin(m)
 	}
-	st.minute.addPoint(p, smp)
+	st.minute.addPoint(p, x, smp)
 	return closed
 }
 
@@ -419,9 +514,9 @@ func (st *serverState) closeMinute(out []Bucket) []Bucket {
 
 // absorbMinute files a closed minute into the recent ring and the hour
 // aggregate. Shared by closing and journal replay.
-func (st *serverState) absorbMinute(b cbucket, out []Bucket) []Bucket {
+func (st *serverState) absorbMinute(b fbucket, out []Bucket) []Bucket {
 	st.lastClosedMinute = b.start
-	if old, evicted := st.recent.push(b); evicted {
+	if old, evicted := pushBucket(&st.recent, b); evicted {
 		st.memFrom = max(st.memFrom, old.start+1)
 	}
 	h := b.start.hour()
@@ -442,7 +537,7 @@ func (st *serverState) closeHour(out []Bucket) []Bucket {
 	b := st.hour.bucket()
 	st.hour = agg{}
 	st.lastClosedHour = b.start
-	st.hours.push(b)
+	pushBucket(&st.hours, b)
 	return append(out, b.toBucket(st.id, Hour))
 }
 
@@ -571,7 +666,7 @@ func (s *Store) replay(files []string) error {
 			}
 			cb := compactBucket(b)
 			if cb.start > st.lastClosedHour {
-				st.hours.push(cb)
+				pushBucket(&st.hours, cb)
 				st.lastClosedHour = cb.start
 			}
 		}
@@ -637,8 +732,10 @@ func (s *Store) Forget(serverID int64) {
 		st.mu.Lock()
 		st.dead = true
 		// Release the memory now; readers holding a stale pointer see empty rings.
-		st.raw, st.recent, st.hours = newRing[rawPoint](0), newRing[cbucket](0), newRing[cbucket](0)
+		st.raw = newExtRing[rawPoint, xpoint](0)
+		st.recent, st.hours = newExtRing[cbucket, xbucket](0), newExtRing[cbucket, xbucket](0)
 		st.minute, st.hour = agg{}, agg{}
+		st.lastIfaces, st.latest.Mounts, st.latest.Interfaces = nil, nil, nil
 		st.mu.Unlock()
 	}
 
