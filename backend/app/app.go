@@ -425,7 +425,8 @@ func liveIncident(ev alerting.Event, channels []string) map[string]any {
 	return map[string]any{
 		"id": ev.Incident.ID, "server_id": ev.Server.ID, "server_name": ev.Server.Name, "rule_id": ev.Rule.ID,
 		"rule_name": ev.Rule.Name, "metric": ev.Rule.Metric, "severity": ev.Rule.Severity, "state": state,
-		"threshold": ev.Rule.Threshold, "peak": ev.Incident.Peak, "last_value": ev.Incident.LastValue,
+		"comparison": comparisonOf(ev.Rule),
+		"threshold":  ev.Rule.Threshold, "peak": ev.Incident.Peak, "last_value": ev.Incident.LastValue,
 		"unit": api.UnitFor(string(ev.Rule.Metric)), "samples_over": ev.Incident.SamplesOver,
 		"started_at": ev.Incident.StartedAt, "resolved_at": resolvedAt, "acked_at": ev.Incident.AckedAt,
 		"notified_channels": channels,
@@ -446,4 +447,11 @@ func trimSlash(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+func comparisonOf(r alerting.Rule) alerting.Comparison {
+	if r.Comparison == "" {
+		return alerting.Above
+	}
+	return r.Comparison
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"backend/alerting"
 	"backend/auth"
 	"backend/store"
 )
@@ -14,17 +15,21 @@ import (
 type incidentJSON struct {
 	store.Incident
 	State        string     `json:"state"`
+	Comparison   string     `json:"comparison"`
 	Unit         string     `json:"unit"`
 	NextNotifyAt *time.Time `json:"next_notify_at"`
 }
 
 func (a *API) incidentJSON(orgID int64, i store.Incident) incidentJSON {
-	out := incidentJSON{Incident: i, State: i.State(), Unit: UnitFor(i.Metric)}
-	if i.State() != "open" || i.RuleID == nil {
+	out := incidentJSON{Incident: i, State: i.State(), Comparison: string(alerting.Above), Unit: UnitFor(i.Metric)}
+	if i.RuleID == nil {
 		return out
 	}
 	for _, r := range a.Dir.OrgRules(orgID) {
-		if r.ID == *i.RuleID && r.CooldownSeconds > 0 {
+		if r.ID == *i.RuleID && r.Comparison != "" {
+			out.Comparison = r.Comparison
+		}
+		if r.ID == *i.RuleID && r.CooldownSeconds > 0 && i.State() == "open" {
 			base := i.StartedAt
 			if i.LastNotifiedAt != nil {
 				base = *i.LastNotifiedAt

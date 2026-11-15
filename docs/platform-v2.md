@@ -430,11 +430,12 @@ interface ServerSummary {
                    cpu_cores: number; uptime_s: number; at: string };
   spark: { cpu: number[]; mem: number[]; disk: number[] };   // last 30 minute buckets
   open_incidents: number; created_at: string;
+  thresholds: Record<'cpu'|'mem'|'disk'|'net_in'|'net_out', { warning: number | null; critical: number | null }>;  // only keys with an enabled 'above' rule
 }
 interface Incident {
   id: number; server_id: number; server_name: string; rule_id: number | null; rule_name: string;
   metric: 'cpu'|'memory'|'disk'|'net_in'|'net_out'|'heartbeat'; severity: 'warning'|'critical';
-  state: 'open' | 'acked' | 'resolved';
+  state: 'open' | 'acked' | 'resolved'; comparison: 'above' | 'below';
   threshold: number; peak: number; last_value: number; unit: '%' | 'B/s' | '';
   samples_over: number; started_at: string; resolved_at: string | null; resolved_how: string | null;
   acked_at: string | null; acked_by: string | null; last_notified_at: string | null;
@@ -452,6 +453,20 @@ interface Channel {
   id: number; type: 'email'|'slack'|'discord'|'telegram'|'webhook'; name: string; enabled: boolean;
   summary: Record<string, string>;            // redacted config
   last_delivery_at: string | null; last_delivery_ok: boolean | null; last_error: string | null;
+}
+```
+
+```ts
+interface Plan {   // GET /org .plan; 0 means unlimited
+  id: string; name: string; max_servers: number; min_interval_seconds: number;
+  retention_1m_days: number; retention_1h_days: number; max_members: number;
+  alert_emails_per_day: number; max_rules: number; max_channels: number; api_rpm: number;
+}
+interface PublicStatus {  // GET /public/status/:slug (cached 60 s)
+  title: string; overall: 'healthy'|'warning'|'critical'|'offline'; updated_at: string;
+  services: { name: string; status: string; uptime_pct: number;
+              days: { day: string; pct: number | null; worst: 'warning'|'critical'|null }[] }[];  // 90 days, oldest first; pct null before the server existed
+  incidents: { service: string; metric: string; severity: string; started_at: string; resolved_at: string | null }[];
 }
 ```
 

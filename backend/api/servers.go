@@ -69,7 +69,10 @@ type serverJSON struct {
 	Latest        *latestJSON `json:"latest"`
 	Spark         sparkJSON   `json:"spark"`
 	OpenIncidents int         `json:"open_incidents"`
-	CreatedAt     time.Time   `json:"created_at"`
+	// Thresholds of enabled "above" rules that apply to this server, keyed
+	// like latest (cpu, mem, disk, net_in, net_out), so lists can colour values.
+	Thresholds map[string]thresholdJSON `json:"thresholds"`
+	CreatedAt  time.Time                `json:"created_at"`
 }
 
 // liveJSON is the slimmer per-server payload pushed over SSE every 3 s.
@@ -126,7 +129,8 @@ func (a *API) summary(s store.Server, pins map[int64]bool, open map[int64]int) s
 	out := serverJSON{
 		ID: s.ID, Name: s.Name, Tags: s.Tags, Pinned: pins[s.ID], Status: status, Connected: connected,
 		LastSeen: a.lastSeen(s, latest), AgentVersion: s.AgentVersion, OpenIncidents: open[s.ID], CreatedAt: s.CreatedAt,
-		Spark: sparkJSON{CPU: nonNil(cpu), Mem: nonNil(mem), Disk: nonNil(disk)},
+		Thresholds: a.thresholds(s),
+		Spark:      sparkJSON{CPU: nonNil(cpu), Mem: nonNil(mem), Disk: nonNil(disk)},
 	}
 	if latest != nil {
 		out.Latest = toLatestJSON(*latest)
