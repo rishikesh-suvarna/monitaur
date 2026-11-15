@@ -50,6 +50,10 @@ type Deps struct {
 	Budget     *limits.EmailBudget
 	Log        *slog.Logger
 	Now        func() time.Time
+	// Silenced reports whether a maintenance window covers a server (or a
+	// check) at a time; app owns the evaluation so alerts and the API agree.
+	// Nil means no maintenance support.
+	Silenced func(orgID, serverID, checkID int64, at time.Time) bool
 }
 
 type API struct {
@@ -136,6 +140,11 @@ func (a *API) Router() *gin.Engine {
 	org.PATCH("/channels/:id", admin, a.patchChannel)
 	org.DELETE("/channels/:id", admin, a.deleteChannel)
 	org.POST("/channels/:id/test", member, a.testChannel)
+
+	org.GET("/maintenance", viewer, a.listMaintenance)
+	org.POST("/maintenance", member, a.createMaintenance)
+	org.PATCH("/maintenance/:id", member, a.patchMaintenance)
+	org.DELETE("/maintenance/:id", member, a.deleteMaintenance)
 
 	r.NoRoute(func(c *gin.Context) { fail(c, http.StatusNotFound, "not_found", "no such endpoint") })
 	return r

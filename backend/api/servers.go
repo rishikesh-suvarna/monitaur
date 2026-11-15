@@ -69,6 +69,7 @@ type serverJSON struct {
 	Latest        *latestJSON `json:"latest"`
 	Spark         sparkJSON   `json:"spark"`
 	OpenIncidents int         `json:"open_incidents"`
+	Maintenance   bool        `json:"maintenance"` // an active maintenance window covers it
 	// Thresholds of enabled "above" rules that apply to this server, keyed
 	// like latest (cpu, mem, disk, net_in, net_out), so lists can colour values.
 	Thresholds map[string]thresholdJSON `json:"thresholds"`
@@ -85,6 +86,7 @@ type liveJSON struct {
 	// Agents report their version on connect, which can happen after the
 	// client cached the server list.
 	AgentVersion string `json:"agent_version"`
+	Maintenance  bool   `json:"maintenance"`
 }
 
 func toLatestJSON(l metrics.Latest) *latestJSON {
@@ -135,6 +137,7 @@ func (a *API) summary(s store.Server, pins map[int64]bool, open map[int64]int) s
 		Thresholds: a.thresholds(s),
 		Spark:      sparkJSON{CPU: nonNil(cpu), Mem: nonNil(mem), Disk: nonNil(disk)},
 	}
+	out.Maintenance = a.inMaintenance(s)
 	if latest != nil {
 		out.Latest = toLatestJSON(*latest)
 	}
@@ -162,6 +165,7 @@ func (a *API) liveServers(orgID int64) []liveJSON {
 	for _, s := range servers {
 		status, connected, latest := a.status(s.ID)
 		l := liveJSON{ID: s.ID, Status: status, Connected: connected, LastSeen: a.lastSeen(s, latest), AgentVersion: s.AgentVersion}
+		l.Maintenance = a.inMaintenance(s)
 		if latest != nil {
 			l.Latest = toLatestJSON(*latest)
 		}

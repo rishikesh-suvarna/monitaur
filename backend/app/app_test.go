@@ -47,7 +47,8 @@ type env struct {
 	ctx context.Context
 }
 
-func newEnv(t *testing.T) *env {
+// newEnv starts the fully wired app; opts adjust the config before New.
+func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 	t.Helper()
 	pool := testdb.Migrated(t)
 	cfg := &config.Config{
@@ -57,6 +58,9 @@ func newEnv(t *testing.T) *env {
 		Metrics:  config.MetricsConfig{FlushInterval: time.Hour, RawWindow: time.Hour, RecentWindow: 24 * time.Hour, JournalDir: t.TempDir()},
 		Limits:   config.LimitsConfig{DefaultPlan: "free"},
 		Secrets:  config.SecretsConfig{EncryptionKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))},
+	}
+	for _, opt := range opts {
+		opt(cfg)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -325,4 +329,270 @@ func TestEndToEnd(t *testing.T) {
 
 	// Account deletion removes the org.
 	e.must(http.StatusNoContent, bob, "DELETE", "/api/v1/me", nil)
+}
+
+// hookReceiver stands in for a webhook endpoint and hands over every payload.
+func hookReceiver(t *testing.T) (*httptest.Server, <-chan map[string]any) {
+	t.Helper()
+	got := make(chan map[string]any, 16)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := map[string]any{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		select {
+		case got <- body:
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, got
+}
+
+type sseEvent struct {
+	name string
+	data map[string]any
+}
+
+// stream subscribes to the SSE endpoint and delivers decoded events until the
+// test ends.
+func (e *env) stream(token string) <-chan sseEvent {
+	e.t.Helper()
+	ctx, cancel := context.WithCancel(e.ctx)
+	e.t.Cleanup(cancel)
+	req, _ := http.NewRequestWithContext(ctx, "GET", e.srv.URL+"/api/v1/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	out := make(chan sseEvent, 64)
+	go func() {
+		defer resp.Body.Close()
+		defer close(out)
+		sc := bufio.NewScanner(resp.Body)
+		name := ""
+		for sc.Scan() {
+			line := sc.Text()
+			switch {
+			case strings.HasPrefix(line, "event: "):
+				name = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "data: "):
+				data := map[string]any{}
+				if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &data) != nil {
+					continue
+				}
+				select {
+				case out <- sseEvent{name: name, data: data}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return out
+}
+
+func nextEvent(t *testing.T, events <-chan sseEvent, name string) map[string]any {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				t.Fatalf("stream closed before a %s event", name)
+			}
+			if ev.name == name {
+				return ev.data
+			}
+		case <-timeout:
+			t.Fatalf("no %s event on the stream", name)
+		}
+	}
+}
+
+// num reads a JSON number as an int (IDs in decoded bodies).
+func num(v any) int {
+	f, _ := v.(float64)
+	return int(f)
+}
+
+// maintenanceByID maps server id to its maintenance flag, for both the REST
+// list and the live snapshot (which carries no names).
+func maintenanceByID(servers []any) map[int]any {
+	out := map[int]any{}
+	for _, s := range servers {
+		s, _ := s.(map[string]any)
+		out[num(s["id"])] = s["maintenance"]
+	}
+	return out
+}
+
+func TestMaintenanceWindows(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) {
+		// The receiver listens on loopback. The legacy plan keeps the per-user
+		// API rate limit out of the way of the polling below.
+		c.Notify.AllowPrivateWebhooks = true
+		c.Limits.DefaultPlan = "legacy"
+	})
+	alice, bob := user("alice"), user("bob")
+	me := e.must(http.StatusOK, alice, "GET", "/api/v1/me", nil)
+	aliceOrg := fmt.Sprint(num(list(me, "orgs")[0].(map[string]any)["id"]))
+	hook, received := hookReceiver(t)
+
+	ch := obj(e.must(http.StatusCreated, alice, "POST", "/api/v1/channels", map[string]any{
+		"type": "webhook", "name": "hook", "config": map[string]any{"webhook_url": hook.URL}}), "channel")
+	prod := e.must(http.StatusCreated, alice, "POST", "/api/v1/servers", map[string]any{"name": "web-01", "tags": []string{"prod"}})
+	dev := e.must(http.StatusCreated, alice, "POST", "/api/v1/servers", map[string]any{"name": "web-02"})
+	prodID, devID := num(obj(prod, "server")["id"]), num(obj(dev, "server")["id"])
+	e.must(http.StatusCreated, alice, "POST", "/api/v1/rules", map[string]any{"name": "cpu-hot", "metric": "cpu",
+		"threshold": 90, "for_seconds": 0, "severity": "critical", "channel_ids": []any{ch["id"]}})
+
+	// web-01 is in an active window by tag; web-02 only in a later one.
+	now := time.Now().UTC()
+	active := obj(e.must(http.StatusCreated, alice, "POST", "/api/v1/maintenance", map[string]any{
+		"name": "prod patching", "scope": map[string]any{"tags": []string{"Prod"}},
+		"starts_at": now.Add(-time.Minute), "ends_at": now.Add(time.Hour)}), "window")
+	if active["state"] != "active" || fmt.Sprint(obj(active, "scope")["tags"]) != "[prod]" || active["created_by"] != "alice@example.com" {
+		t.Fatalf("active window = %v", active)
+	}
+	later := obj(e.must(http.StatusCreated, alice, "POST", "/api/v1/maintenance", map[string]any{
+		"name": "dev later", "scope": map[string]any{"server_ids": []int{devID, devID}, "check_ids": []int{12345}},
+		"starts_at": now.Add(time.Hour), "ends_at": now.Add(2 * time.Hour)}), "window")
+	if scope := obj(later, "scope"); later["state"] != "scheduled" || len(list(scope, "server_ids")) != 1 ||
+		num(list(scope, "server_ids")[0]) != devID || fmt.Sprint(scope["check_ids"]) != "[12345]" {
+		t.Fatalf("scheduled window = %v", later)
+	}
+	if ws := list(e.must(http.StatusOK, alice, "GET", "/api/v1/maintenance", nil), "windows"); len(ws) != 2 {
+		t.Fatalf("windows = %v", ws)
+	}
+
+	m := maintenanceByID(list(e.must(http.StatusOK, alice, "GET", "/api/v1/servers", nil), "servers"))
+	if m[prodID] != true || m[devID] != false {
+		t.Fatalf("/servers maintenance = %v, want only web-01 (%d)", m, prodID)
+	}
+	events := e.stream(alice)
+	if m := maintenanceByID(list(nextEvent(t, events, "servers"), "servers")); m[prodID] != true || m[devID] != false {
+		t.Fatalf("live maintenance = %v, want only web-01 (%d)", m, prodID)
+	}
+
+	// A real breach on web-01: recorded and streamed, but not delivered.
+	sendMetrics(t, e.agent(prod["token"].(string)), 95)
+	opened := nextEvent(t, events, "incident")
+	if inc := obj(opened, "incident"); opened["action"] != "opened" || num(inc["server_id"]) != prodID ||
+		inc["silenced"] != true || len(list(inc, "notified_channels")) != 0 {
+		t.Fatalf("live incident = %v", opened)
+	}
+	incidentsOf := func(serverID int) []any {
+		return list(e.must(http.StatusOK, alice, "GET", fmt.Sprintf("/api/v1/incidents?server_id=%d", serverID), nil), "incidents")
+	}
+	eventually(t, "silenced incident recorded", func() bool {
+		incs := incidentsOf(prodID)
+		return len(incs) == 1 && incs[0].(map[string]any)["silenced"] == true
+	})
+
+	// The same rule on web-02, outside any active window: delivered. Had
+	// web-01's alert been dispatched it would have been queued first.
+	sendMetrics(t, e.agent(dev["token"].(string)), 95)
+	select {
+	case body := <-received:
+		if body["server"] != "web-02" {
+			t.Fatalf("notification for %v, want only web-02 (web-01 is in maintenance)", body["server"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification for the server outside maintenance")
+	}
+	select {
+	case body := <-received:
+		t.Fatalf("unexpected second notification: %v", body)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if incs := incidentsOf(devID); len(incs) != 1 || incs[0].(map[string]any)["silenced"] != false {
+		t.Fatalf("web-02 incidents = %v", incs)
+	}
+
+	// End now: the window is over and web-01 leaves maintenance.
+	windowPath := fmt.Sprintf("/api/v1/maintenance/%d", num(active["id"]))
+	ended := obj(e.must(http.StatusOK, alice, "PATCH", windowPath, map[string]any{"ends_at": time.Now().UTC()}), "window")
+	if ended["state"] != "ended" || ended["name"] != "prod patching" || fmt.Sprint(obj(ended, "scope")["tags"]) != "[prod]" {
+		t.Fatalf("ended window = %v", ended)
+	}
+	if m := maintenanceByID(list(e.must(http.StatusOK, alice, "GET", "/api/v1/servers", nil), "servers")); m[prodID] != false {
+		t.Fatalf("/servers maintenance after end = %v", m)
+	}
+
+	// Validation.
+	start := time.Now().UTC().Add(time.Hour)
+	valid := func(mut func(map[string]any)) map[string]any {
+		body := map[string]any{"name": "w", "scope": map[string]any{"all": true}, "starts_at": start, "ends_at": start.Add(time.Hour)}
+		mut(body)
+		return body
+	}
+	for name, body := range map[string]map[string]any{
+		"blank name":      valid(func(b map[string]any) { b["name"] = "  " }),
+		"long name":       valid(func(b map[string]any) { b["name"] = strings.Repeat("x", 81) }),
+		"inverted":        valid(func(b map[string]any) { b["ends_at"] = start.Add(-time.Minute) }),
+		"empty range":     valid(func(b map[string]any) { b["ends_at"] = start }),
+		"over 30 days":    valid(func(b map[string]any) { b["ends_at"] = start.Add(30*24*time.Hour + time.Second) }),
+		"missing end":     valid(func(b map[string]any) { delete(b, "ends_at") }),
+		"no scope":        valid(func(b map[string]any) { delete(b, "scope") }),
+		"empty scope":     valid(func(b map[string]any) { b["scope"] = map[string]any{} }),
+		"bad check id":    valid(func(b map[string]any) { b["scope"] = map[string]any{"check_ids": []int{0}} }),
+		"bad tag":         valid(func(b map[string]any) { b["scope"] = map[string]any{"tags": []string{"not a tag"}} }),
+		"unknown server":  valid(func(b map[string]any) { b["scope"] = map[string]any{"server_ids": []int{999_999}} }),
+		"malformed times": valid(func(b map[string]any) { b["starts_at"] = "tomorrow" }),
+	} {
+		if code, out := e.do(alice, "POST", "/api/v1/maintenance", body); code != http.StatusBadRequest || out["code"] != "invalid" {
+			t.Errorf("%s: %d %v, want 400 invalid", name, code, out)
+		}
+	}
+	e.must(http.StatusCreated, alice, "POST", "/api/v1/maintenance", valid(func(b map[string]any) {
+		b["name"], b["ends_at"] = strings.Repeat("y", 80), start.Add(30*24*time.Hour)
+	}))
+	if code, _ := e.do(alice, "PATCH", windowPath, map[string]any{"ends_at": now.Add(-2 * time.Minute)}); code != http.StatusBadRequest {
+		t.Fatalf("patch ending before start = %d, want 400", code)
+	}
+
+	// Tenant isolation: bob cannot see, change, delete or target alice's.
+	e.must(http.StatusOK, bob, "GET", "/api/v1/me", nil)
+	if ws := list(e.must(http.StatusOK, bob, "GET", "/api/v1/maintenance", nil), "windows"); len(ws) != 0 {
+		t.Fatalf("bob sees windows: %v", ws)
+	}
+	for _, method := range []string{"PATCH", "DELETE"} {
+		if code, _ := e.do(bob, method, windowPath, map[string]any{"name": "pwned"}); code != http.StatusNotFound {
+			t.Fatalf("bob %s alice's window = %d, want 404", method, code)
+		}
+	}
+	if code, _ := e.do(bob, "POST", "/api/v1/maintenance", valid(func(b map[string]any) {
+		b["scope"] = map[string]any{"server_ids": []int{prodID}}
+	})); code != http.StatusBadRequest {
+		t.Fatalf("bob window over alice's server = %d, want 400", code)
+	}
+	if code, _ := e.do(bob, "GET", "/api/v1/maintenance", nil, "X-Monitaur-Org", aliceOrg); code != http.StatusNotFound {
+		t.Fatalf("bob with alice's org header = %d, want 404", code)
+	}
+	if ws := list(e.must(http.StatusOK, alice, "GET", "/api/v1/maintenance", nil), "windows"); len(ws) != 3 {
+		t.Fatalf("alice's windows after bob's attempts = %d, want 3", len(ws))
+	}
+
+	// Roles: viewers read, members and up write.
+	inv := e.must(http.StatusCreated, alice, "POST", "/api/v1/org/invites", map[string]any{"email": "dave@example.com", "role": "viewer"})
+	dave := user("dave")
+	e.must(http.StatusOK, dave, "POST", "/api/v1/invites/accept", map[string]any{
+		"token": strings.TrimPrefix(inv["invite_url"].(string), "http://localhost:5173/invite/")})
+	if ws := list(e.must(http.StatusOK, dave, "GET", "/api/v1/maintenance", nil, "X-Monitaur-Org", aliceOrg), "windows"); len(ws) != 3 {
+		t.Fatalf("viewer sees %d windows, want 3", len(ws))
+	}
+	for _, req := range []struct{ method, path string }{
+		{"POST", "/api/v1/maintenance"}, {"PATCH", windowPath}, {"DELETE", windowPath},
+	} {
+		if _, out := e.do(dave, req.method, req.path, valid(func(map[string]any) {}), "X-Monitaur-Org", aliceOrg); out["code"] != "forbidden" {
+			t.Fatalf("viewer %s %s = %v, want forbidden", req.method, req.path, out)
+		}
+	}
+
+	laterPath := fmt.Sprintf("/api/v1/maintenance/%d", num(later["id"]))
+	e.must(http.StatusNoContent, alice, "DELETE", laterPath, nil)
+	if code, _ := e.do(alice, "DELETE", laterPath, nil); code != http.StatusNotFound {
+		t.Fatalf("second delete = %d, want 404", code)
+	}
 }

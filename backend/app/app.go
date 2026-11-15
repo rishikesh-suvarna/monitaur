@@ -129,6 +129,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	a.api = api.New(api.Deps{
 		Config: cfg, Store: a.store, Auth: a.auth, Dir: a.dir, Metrics: a.metrics, Engine: a.engine,
 		Dispatcher: a.dispatcher, Hub: a.hub, Broker: a.broker, Limiter: a.limiter, Budget: a.budget, Log: log,
+		Silenced: a.silenced,
 	})
 	return a, nil
 }
@@ -362,9 +363,16 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 		alerting.EventFired: notify.KindFired, alerting.EventRenotify: notify.KindRenotify, alerting.EventResolved: notify.KindResolved,
 	}[ev.Kind]
 
+	// A maintenance window silences fired, renotify and resolved alike; the
+	// incident is still recorded and live clients still get the event.
+	silenced := a.silenced(ev.Server.OrgID, ev.Server.ID, 0, ev.At)
+	var channels []store.Channel
+	if !silenced {
+		channels = a.dir.OrgChannels(ev.Server.OrgID)
+	}
 	var targets []notify.Channel
 	var names []string
-	for _, c := range a.dir.OrgChannels(ev.Server.OrgID) {
+	for _, c := range channels {
 		if !c.Enabled || !containsID(ev.Rule.ChannelIDs, c.ID) {
 			continue
 		}
@@ -400,11 +408,17 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 			}
 		}(ev.Incident.ID, ev.At)
 	}
+	if ev.Kind == alerting.EventFired && silenced {
+		a.markSilenced(ev.Incident.ID)
+	}
 
 	action := map[alerting.EventKind]string{alerting.EventFired: "opened", alerting.EventRenotify: "updated", alerting.EventResolved: "resolved"}[ev.Kind]
+	live := liveIncident(ev, names)
+	// Mirrors incidents.silenced, which is set when the incident opens.
+	live["silenced"] = a.silenced(ev.Server.OrgID, ev.Server.ID, 0, ev.Incident.StartedAt)
 	a.broker.Publish(ev.Server.OrgID, "incident", map[string]any{
 		"action":   action,
-		"incident": liveIncident(ev, names),
+		"incident": live,
 	})
 }
 
