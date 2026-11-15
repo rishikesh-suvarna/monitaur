@@ -18,6 +18,7 @@ env:
   INSTALL_PATH: /usr/local/bin/monitaur-backend
   SERVICE_NAME: monitaur-backend
   HEALTH_URL: http://localhost:8080/health
+  JOURNAL_DIR: /var/lib/monitaur/journal
 
 jobs:
   deploy:
@@ -51,12 +52,14 @@ jobs:
         sha256sum monitaur-backend | tee monitaur-backend.sha256
 
     - name: Copy binary to server
-      uses: appleboy/scp-action@v0.1.7
+      uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        # Empty secret = no host key check; set it to pin the VM's key.
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         source: "backend/monitaur-backend,backend/monitaur-backend.sha256"
         target: ${{ env.STAGING_DIR }}
         # Strips the leading "backend/" so files land directly in STAGING_DIR.
@@ -67,12 +70,14 @@ jobs:
         rm: true
 
     - name: Install, restart, health check (rolls back on failure)
-      uses: appleboy/ssh-action@v1.0.3
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        # Empty secret = no host key check; set it to pin the VM's key.
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         script: |
           set -eu
 
@@ -80,6 +85,7 @@ jobs:
           INSTALL_PATH="${{ env.INSTALL_PATH }}"
           SERVICE_NAME="${{ env.SERVICE_NAME }}"
           HEALTH_URL="${{ env.HEALTH_URL }}"
+          JOURNAL_DIR="${{ env.JOURNAL_DIR }}"
           NEW_BIN="$STAGING_DIR/monitaur-backend"
           PREV_BIN="$INSTALL_PATH.prev"
           HEALTH_ATTEMPTS=15
@@ -111,6 +117,12 @@ jobs:
             exit 1
           fi
           (cd "$STAGING_DIR" && sha256sum -c monitaur-backend.sha256)
+
+          # v2 keeps a crash journal of unflushed metric rollups here
+          # (metrics.journal_dir); the service user must be able to write it.
+          SVC_USER="$(sudo systemctl show -p User --value "$SERVICE_NAME" 2>/dev/null || true)"
+          [ -n "$SVC_USER" ] || SVC_USER=root
+          sudo install -d -m 0750 -o "$SVC_USER" "$JOURNAL_DIR"
 
           if [ -f "$INSTALL_PATH" ]; then
             echo "Keeping current binary as $PREV_BIN"
