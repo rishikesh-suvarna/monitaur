@@ -2,9 +2,10 @@
  * Public status page shaping (StatusPage.dc.html): the 90-day uptime bar, the
  * overall verdict line and incident cards. Pure, unit tested.
  */
-import type { PublicStatusDay, PublicStatusIncident, PublicStatusService, ServerStatus } from '../../api/types';
+import type { PublicServiceKind, PublicStatusDay, PublicStatusIncident, PublicStatusService, ServerStatus } from '../../api/types';
+import { checkBadgeStatus, isCheckMetric, isCheckStatus } from '../../lib/checks';
 import { EMPTY_VALUE, formatDayTime, formatDuration, toTime } from '../../lib/format';
-import { METRIC_LABELS } from '../../lib/status';
+import { METRIC_LABELS, SERVER_STATUSES } from '../../lib/status';
 
 export const UPTIME_DAYS = 90;
 const MS_PER_DAY = 86_400_000;
@@ -19,6 +20,33 @@ export const STATUS_WORD: Record<ServerStatus, string> = {
   critical: 'Outage',
   offline: 'Offline',
 };
+
+// ---------------------------------------------------------------- services
+
+/** A service ready to draw: server vocabulary for the status, and a kind even from older backends. */
+export interface StatusService extends Omit<PublicStatusService, 'status' | 'kind'> {
+  status: ServerStatus;
+  kind: PublicServiceKind;
+}
+
+const isServerStatus = (value: string): value is ServerStatus => (SERVER_STATUSES as readonly string[]).includes(value);
+
+/**
+ * docs/platform-v2.md 6.3 does not say which words a check service sends:
+ * server words pass through, check words (up, down, ...) map onto their
+ * badge shape, anything else reads as offline.
+ */
+export function serviceStatus(status: string): ServerStatus {
+  if (isServerStatus(status)) return status;
+  if (isCheckStatus(status)) return checkBadgeStatus(status);
+  return 'offline';
+}
+
+export function normalizeService(service: PublicStatusService): StatusService {
+  return { ...service, status: serviceStatus(service.status), kind: service.kind ?? 'server' };
+}
+
+export const SERVICE_KIND_LABEL: Record<PublicServiceKind, string> = { server: 'Server', check: 'Uptime check' };
 
 export type DayKind = 'ok' | 'warn' | 'crit' | 'none';
 
@@ -89,7 +117,7 @@ export function shapeUptimeDays(days: readonly PublicStatusDay[], count = UPTIME
 }
 
 /** Screen-reader summary of one service's bar. */
-export function uptimeSummary(service: Pick<PublicStatusService, 'name' | 'uptime_pct' | 'status'>, cells: readonly UptimeCell[]): string {
+export function uptimeSummary(service: Pick<StatusService, 'name' | 'uptime_pct' | 'status'>, cells: readonly UptimeCell[]): string {
   const incidentDays = cells.filter((cell) => cell.kind === 'warn' || cell.kind === 'crit').length;
   const days = incidentDays === 0 ? 'no days with incidents' : incidentDays === 1 ? '1 day with incidents' : `${incidentDays} days with incidents`;
   return `${service.name}: ${formatUptime(service.uptime_pct)} uptime over ${UPTIME_DAYS} days, ${days}, currently ${STATUS_WORD[service.status].toLowerCase()}.`;
@@ -108,7 +136,7 @@ const joinNames = (names: readonly string[]): string =>
   names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1] ?? ''}`;
 
 /** "Database is degraded; everything else is operational", "All systems operational". */
-export function statusVerdict(services: readonly Pick<PublicStatusService, 'name' | 'status'>[]): string {
+export function statusVerdict(services: readonly Pick<StatusService, 'name' | 'status'>[]): string {
   if (services.length === 0) return 'No services are listed on this page yet.';
   const parts = VERDICT_ORDER.flatMap((status) => {
     const names = services.filter((service) => service.status === status).map((service) => service.name);
@@ -131,19 +159,30 @@ export interface IncidentView {
   body: string;
 }
 
+/** "Unreachable", "Down", "Certificate expiring", "CPU critical". */
+function publicIncidentWhat(incident: Pick<PublicStatusIncident, 'metric' | 'severity'>): string {
+  if (incident.metric === 'heartbeat') return 'Unreachable';
+  if (incident.metric === 'tls_expiry') return 'Certificate expiring';
+  if (isCheckMetric(incident.metric)) return 'Down';
+  return `${METRIC_LABELS[incident.metric]} ${incident.severity}`;
+}
+
 export function incidentView(incident: PublicStatusIncident, now: number): IncidentView {
   const start = toTime(incident.started_at) ?? now;
   const end = toTime(incident.resolved_at);
   const resolved = end !== null;
-  const what = incident.metric === 'heartbeat' ? 'Unreachable' : `${METRIC_LABELS[incident.metric]} ${incident.severity}`;
   const started = formatDayTime(start, now);
   const length = formatDuration(((end ?? now) - start) / MS_PER_SECOND);
   let status: ServerStatus = 'healthy';
-  if (!resolved) status = incident.metric === 'heartbeat' ? 'offline' : incident.severity === 'critical' ? 'critical' : 'warning';
+  if (!resolved) {
+    if (incident.metric === 'heartbeat') status = 'offline';
+    else if (isCheckMetric(incident.metric) && incident.metric !== 'tls_expiry') status = 'critical';
+    else status = incident.severity === 'critical' ? 'critical' : 'warning';
+  }
   return {
     status,
     badge: resolved ? 'Resolved' : 'Ongoing',
-    title: `${incident.service}: ${what}`,
+    title: `${incident.service}: ${publicIncidentWhat(incident)}`,
     when: resolved ? `${started} · ${length}` : `${started} · ongoing`,
     body: resolved ? `Started ${started} and resolved after ${length}.` : `Started ${started}; ongoing for ${length}.`,
   };

@@ -34,6 +34,22 @@ export {
 export { useCreateRule, useDeleteRule, usePreviewRule, useRules, useUpdateRule } from './api/rules';
 export { useChannels, useCreateChannel, useDeleteChannel, useTestChannel, useUpdateChannel } from './api/channels';
 export { usePublicStatus } from './api/publicStatus';
+export {
+  CHECK_RESULTS_REFRESH_MS,
+  useCheckResults,
+  useChecks,
+  useCreateCheck,
+  useDeleteCheck,
+  useRunCheck,
+  useUpdateCheck,
+} from './api/checks';
+export {
+  MAINTENANCE_REFRESH_MS,
+  useCreateMaintenance,
+  useDeleteMaintenance,
+  useMaintenanceWindows,
+  useUpdateMaintenance,
+} from './api/maintenance';
 
 // Live data and UI hooks
 export { STREAM_IDLE_TIMEOUT_MS, useLiveStream, type LiveConnectionState, type LiveStreamStatus } from './useLiveStream';

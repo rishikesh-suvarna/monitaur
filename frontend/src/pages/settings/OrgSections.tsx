@@ -1,10 +1,11 @@
 import { ArrowTopRightOnSquareIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 
 import { errorMessage, hasErrorCode, isApiError } from '../../api/errors';
 import { queryKeys } from '../../api/queryKeys';
-import type { Member, Org, Role, ServerSummary } from '../../api/types';
+import type { Check, Member, Org, Role, ServerSummary } from '../../api/types';
 import { Button } from '../../components/Button';
 import { buttonClasses } from '../../components/buttonClasses';
 import { Chip, ChipButton } from '../../components/Chip';
@@ -20,6 +21,7 @@ import { useToast } from '../../components/toastContext';
 import { Toggle } from '../../components/Toggle';
 import { UsageMeter } from '../../components/UsageMeter';
 import { useDeleteInvite, useMembers, useOrgDetails, useRemoveMember, useUpdateMemberRole, useUpdateOrg } from '../../hooks/api/org';
+import { useChecks } from '../../hooks/api/checks';
 import { useServers } from '../../hooks/api/servers';
 import { useNow } from '../../hooks/useNow';
 import { cn } from '../../lib/cn';
@@ -366,6 +368,10 @@ export function PlanSection() {
         <UsageMeter label="Members" noun="members" used={usage.members} limit={plan.max_members} />
         <UsageMeter label="Alert rules" noun="alert rules" used={usage.rules} limit={plan.max_rules} />
         <UsageMeter label="Channels" noun="channels" used={usage.channels} limit={plan.max_channels} />
+        {/* F7: only when the backend reports the checks quota and usage. */}
+        {plan.max_checks !== undefined && usage.checks !== undefined && (
+          <UsageMeter label="Uptime checks" noun="uptime checks" used={usage.checks} limit={plan.max_checks} />
+        )}
         <UsageMeter label="Alert emails today" noun="alert emails today" used={usage.alert_emails_today} limit={plan.alert_emails_per_day} />
       </div>
     </SettingsCard>
@@ -377,7 +383,8 @@ export function PlanSection() {
 export function StatusPageSection() {
   const details = useOrgDetails();
   const servers = useServers();
-  if (details.isPending || servers.isPending) {
+  const checks = useChecks();
+  if (details.isPending || servers.isPending || checks.isPending) {
     return (
       <SettingsCard title="Status page">
         <div aria-busy="true" aria-label="Loading status page settings" className="flex flex-col gap-3">
@@ -403,15 +410,33 @@ export function StatusPageSection() {
       </SettingsCard>
     );
   }
-  return <StatusPageEditor key={details.data.org.id} org={details.data.org} servers={servers.data.servers} />;
+  // Checks are optional here: a backend without them (or a failed load) still lets servers be picked.
+  return (
+    <StatusPageEditor
+      key={details.data.org.id}
+      org={details.data.org}
+      servers={servers.data.servers}
+      checks={checks.data?.checks ?? null}
+      onRetryChecks={() => void checks.refetch()}
+    />
+  );
 }
 
-function StatusPageEditor({ org, servers }: { org: Org; servers: readonly ServerSummary[] }) {
+interface StatusPageEditorProps {
+  org: Org;
+  servers: readonly ServerSummary[];
+  /** Null when GET /checks failed. */
+  checks: readonly Check[] | null;
+  onRetryChecks: () => void;
+}
+
+function StatusPageEditor({ org, servers, checks, onRetryChecks }: StatusPageEditorProps) {
   const { can } = useOrg();
   const { toast } = useToast();
   const update = useUpdateOrg();
   const slugId = useId();
   const serversLabelId = useId();
+  const checksLabelId = useId();
   const [saved, setSaved] = useState<StatusPageForm>(() => statusPageForm(org));
   const [form, setForm] = useState<StatusPageForm>(saved);
   const [attempted, setAttempted] = useState(false);
@@ -435,6 +460,10 @@ function StatusPageEditor({ org, servers }: { org: Org; servers: readonly Server
     set({ serverIds: form.serverIds.includes(id) ? form.serverIds.filter((item) => item !== id) : [...form.serverIds, id] });
   };
 
+  const toggleCheck = (id: number): void => {
+    set({ checkIds: form.checkIds.includes(id) ? form.checkIds.filter((item) => item !== id) : [...form.checkIds, id] });
+  };
+
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     setAttempted(true);
@@ -451,13 +480,13 @@ function StatusPageEditor({ org, servers }: { org: Org; servers: readonly Server
   };
 
   return (
-    <SettingsCard title="Status page" description="A public page with 90-day uptime and recent incidents for the servers you pick.">
+    <SettingsCard title="Status page" description="A public page with 90-day uptime and recent incidents for the servers and uptime checks you pick.">
       <form onSubmit={submit} className="flex flex-col gap-4">
         <fieldset disabled={!canEdit} className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0" title={canEdit ? undefined : ADMIN_ONLY}>
           <Toggle
             labelPosition="before"
             label="Public status page"
-            description="Anyone with the link sees the picked servers’ names, uptime and incidents. No metrics or hosts are shown."
+            description="Anyone with the link sees the picked servers’ and checks’ names, uptime and incidents. No metrics, hosts or check targets are shown."
             checked={form.enabled}
             disabled={!canEdit}
             onChange={(enabled) => {
@@ -555,6 +584,59 @@ function StatusPageEditor({ org, servers }: { org: Org; servers: readonly Server
                     }}
                   >
                     {server.name}
+                  </ChipButton>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span id={checksLabelId} className={cn(labelClasses, 'flex-1')}>
+                Uptime checks on the page <span className="num font-normal text-ink-faint">{form.checkIds.length}</span>
+              </span>
+              {checks !== null && checks.length > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      set({ checkIds: checks.map((check) => check.id) });
+                    }}
+                  >
+                    All
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      set({ checkIds: [] });
+                    }}
+                  >
+                    None
+                  </Button>
+                </>
+              )}
+            </div>
+            {checks === null ? (
+              <ErrorState variant="widget" error={null} title="Couldn’t load uptime checks." onRetry={onRetryChecks} />
+            ) : checks.length === 0 ? (
+              <span className={hintClasses}>
+                No uptime checks yet. <Link to="/checks">Add one</Link> to show a website or API here.
+              </span>
+            ) : (
+              <div role="group" aria-labelledby={checksLabelId} className="flex flex-wrap gap-1.5">
+                {checks.map((check) => (
+                  <ChipButton
+                    key={check.id}
+                    pressed={form.checkIds.includes(check.id)}
+                    className="max-w-full"
+                    title={check.name}
+                    onClick={() => {
+                      toggleCheck(check.id);
+                    }}
+                  >
+                    <span className="truncate">{check.name}</span>
                   </ChipButton>
                 ))}
               </div>

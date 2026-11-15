@@ -2,7 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import type { PublicStatusDay } from '../../api/types';
 
-import { dayKind, formatUptime, incidentView, pageHeading, shapeUptimeDays, statusVerdict, uptimeSummary } from './statusModel';
+import {
+  dayKind,
+  formatUptime,
+  incidentView,
+  normalizeService,
+  pageHeading,
+  serviceStatus,
+  shapeUptimeDays,
+  statusVerdict,
+  uptimeSummary,
+} from './statusModel';
 
 const day = (date: string, pct: number | null, worst: PublicStatusDay['worst'] = null): PublicStatusDay => ({ day: date, pct, worst });
 
@@ -75,5 +85,29 @@ describe('incidents', () => {
   it('does not double the word status in the heading', () => {
     expect(pageHeading('Acme')).toBe('Acme status');
     expect(pageHeading('Acme Status')).toBe('Acme Status');
+  });
+});
+
+describe('check services (F7)', () => {
+  it('maps check words onto the server vocabulary and keeps server words', () => {
+    expect(serviceStatus('up')).toBe('healthy');
+    expect(serviceStatus('down')).toBe('critical');
+    expect(serviceStatus('degraded')).toBe('warning');
+    expect(serviceStatus('paused')).toBe('offline');
+    expect(serviceStatus('warning')).toBe('warning');
+    expect(serviceStatus('mystery')).toBe('offline');
+  });
+
+  it('defaults the kind to server for older backends', () => {
+    expect(normalizeService({ name: 'db', status: 'healthy', uptime_pct: 100, days: [] }).kind).toBe('server');
+    expect(normalizeService({ name: 'API', status: 'down', uptime_pct: 99, days: [], kind: 'check' })).toMatchObject({ kind: 'check', status: 'critical' });
+  });
+
+  it('words check incidents for visitors', () => {
+    const now = Date.parse('2026-11-15T14:30:00Z');
+    const down = incidentView({ service: 'API', metric: 'http', severity: 'critical', started_at: '2026-11-15T14:00:00Z', resolved_at: null }, now);
+    expect(down).toMatchObject({ status: 'critical', title: 'API: Down', badge: 'Ongoing' });
+    const cert = incidentView({ service: 'Site', metric: 'tls_expiry', severity: 'warning', started_at: '2026-11-15T14:00:00Z', resolved_at: null }, now);
+    expect(cert).toMatchObject({ status: 'warning', title: 'Site: Certificate expiring' });
   });
 });

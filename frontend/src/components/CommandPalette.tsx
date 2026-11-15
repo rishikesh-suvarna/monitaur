@@ -2,6 +2,7 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/re
 import {
   AdjustmentsHorizontalIcon,
   BellIcon,
+  GlobeAltIcon,
   MagnifyingGlassIcon,
   MoonIcon,
   PaperAirplaneIcon,
@@ -84,6 +85,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     () => [
       { id: 'add-server', group: 'Actions', label: 'Add server', keywords: 'new create onboarding agent', icon: <PlusIcon className={ICON} strokeWidth={1.8} />, run: go('/onboarding') },
       { id: 'go-overview', group: 'Actions', label: 'Go to overview', keywords: 'home servers', icon: <Squares2X2Icon className={ICON} strokeWidth={1.8} />, keys: ['G', 'O'], run: go('/') },
+      { id: 'go-checks', group: 'Actions', label: 'Go to uptime checks', keywords: 'http tcp tls ssl certificate ping endpoint monitor', icon: <GlobeAltIcon className={ICON} strokeWidth={1.8} />, keys: ['G', 'U'], run: go('/checks') },
       { id: 'go-alerts', group: 'Actions', label: 'Go to alerts', keywords: 'incidents', icon: <BellIcon className={ICON} strokeWidth={1.8} />, keys: ['G', 'A'], run: go('/alerts') },
       { id: 'go-rules', group: 'Actions', label: 'Go to alert rules', keywords: 'thresholds', icon: <AdjustmentsHorizontalIcon className={ICON} strokeWidth={1.8} />, keys: ['G', 'R'], run: go('/rules') },
       { id: 'go-channels', group: 'Actions', label: 'Go to channels', keywords: 'notifications slack email discord telegram webhook', icon: <PaperAirplaneIcon className={ICON} strokeWidth={1.8} />, keys: ['G', 'C'], run: go('/channels') },

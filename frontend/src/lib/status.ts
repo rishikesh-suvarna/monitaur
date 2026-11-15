@@ -2,8 +2,9 @@
  * Status encoding (Tokens.dc.html "Status encoding"): every status is colour +
  * shape + word. These helpers map API values onto that vocabulary.
  */
-import type { Incident, MetricKey, MetricUnit, ServerStatus, Severity } from '../api/types';
+import type { CheckMetric, Incident, IncidentMetric, MetricKey, MetricUnit, ServerStatus, Severity } from '../api/types';
 
+import { CHECK_METRIC_LABELS, isCheckMetric } from './checks';
 import { formatPercent, formatRate } from './format';
 
 export interface StatusMeta {
@@ -45,6 +46,11 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   swap: 'Swap',
 };
 
+/** Label for any incident metric, server or uptime check. */
+export function metricLabel(metric: IncidentMetric): string {
+  return isCheckMetric(metric) ? CHECK_METRIC_LABELS[metric] : METRIC_LABELS[metric];
+}
+
 /** How an incident is drawn: badge status, badge word and the left bar tone. */
 export interface IncidentPresentation {
   status: ServerStatus;
@@ -58,6 +64,13 @@ export interface IncidentPresentation {
  */
 export function presentIncident(incident: Pick<Incident, 'state' | 'metric' | 'severity'>): IncidentPresentation {
   if (incident.state === 'resolved') return { status: 'healthy', label: 'Resolved', bar: 'resolved' };
+  // Uptime checks: a failing check reads "Down"; a certificate near expiry keeps its severity.
+  if (incident.metric === 'tls_expiry') {
+    return incident.severity === 'critical'
+      ? { status: 'critical', label: 'Expired', bar: 'crit' }
+      : { status: 'warning', label: 'Expiring', bar: 'warn' };
+  }
+  if (isCheckMetric(incident.metric)) return { status: 'critical', label: 'Down', bar: 'crit' };
   if (incident.metric === 'heartbeat') return { status: 'offline', label: 'Unreachable', bar: 'off' };
   if (incident.severity === 'critical') return { status: 'critical', label: 'Critical', bar: 'crit' };
   return { status: 'warning', label: 'Warning', bar: 'warn' };
@@ -84,11 +97,25 @@ export function formatThreshold(value: number, unit: MetricUnit): string {
  * at or over the threshold means the rule was "above".
  */
 export function incidentTitle(
-  incident: Pick<Incident, 'metric' | 'threshold' | 'peak' | 'unit'> & Partial<Pick<Incident, 'comparison'>>,
+  incident: Pick<Incident, 'metric' | 'threshold' | 'peak' | 'unit'> & Partial<Pick<Incident, 'comparison' | 'last_value'>>,
 ): string {
   if (incident.metric === 'heartbeat') return 'No heartbeat';
+  if (isCheckMetric(incident.metric)) return checkIncidentTitle(incident.metric, incident.last_value ?? incident.peak);
   const comparison = incident.comparison ?? (incident.peak >= incident.threshold ? 'above' : 'below');
   return `${METRIC_LABELS[incident.metric]} ${comparison} ${formatThreshold(incident.threshold, incident.unit)}`;
+}
+
+const CHECK_FAILING_TITLE: Record<Exclude<CheckMetric, 'tls_expiry'>, string> = {
+  http: 'HTTP check failing',
+  tcp: 'TCP connect failing',
+  tls: 'TLS handshake failing',
+};
+
+/** "HTTP check failing", "Certificate expires in 9 d" (the value of a tls_expiry incident is days left). */
+function checkIncidentTitle(metric: CheckMetric, value: number): string {
+  if (metric !== 'tls_expiry') return CHECK_FAILING_TITLE[metric];
+  const days = Math.floor(value);
+  return days <= 0 ? 'Certificate expired' : `Certificate expires in ${days} d`;
 }
 
 /** Server metrics that have a sparkline column on the overview. */
@@ -110,7 +137,7 @@ export type MetricBreaches = Partial<Record<FleetMetric, Severity>>;
 export function breachesByServer(incidents: readonly Incident[]): Map<number, MetricBreaches> {
   const out = new Map<number, MetricBreaches>();
   for (const incident of incidents) {
-    if (incident.state === 'resolved') continue;
+    if (incident.state === 'resolved' || incident.server_id === null || isCheckMetric(incident.metric)) continue;
     const metric = INCIDENT_TO_FLEET_METRIC[incident.metric];
     if (!metric) continue;
     const current = out.get(incident.server_id) ?? {};

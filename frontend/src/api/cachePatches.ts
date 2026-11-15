@@ -4,6 +4,9 @@
  * does not notify subscribers needlessly.
  */
 import type {
+  Check,
+  CheckResult,
+  ChecksResponse,
   Incident,
   IncidentCounts,
   IncidentFilters,
@@ -12,6 +15,7 @@ import type {
   ServerDetailResponse,
   ServersResponse,
   ServerSummary,
+  StreamCheckUpdate,
   StreamServerUpdate,
 } from './types';
 
@@ -76,6 +80,7 @@ export function incidentMatches(incident: Incident, filters: IncidentFilters): b
   if (filters.severity !== undefined && incident.severity !== filters.severity) return false;
   if (filters.metric !== undefined && incident.metric !== filters.metric) return false;
   if (filters.server_id !== undefined && incident.server_id !== filters.server_id) return false;
+  if (filters.check_id !== undefined && incident.check_id !== filters.check_id) return false;
   return true;
 }
 
@@ -139,4 +144,90 @@ export function bumpOpenIncidents(current: ServersResponse, serverId: number, de
     server.id === serverId ? { ...server, open_incidents: Math.max(0, server.open_incidents + delta) } : server,
   );
   return { ...current, servers };
+}
+
+// ---------------------------------------------------------------- uptime checks
+
+/** CheckJSON.latency_spark holds the last 30 results (docs/platform-v2.md 6.3). */
+export const CHECK_SPARK_POINTS = 30;
+
+export interface ChecksPatchResult {
+  next: ChecksResponse;
+  /** Ids in the stream that are not in the cache (created elsewhere). */
+  unknownIds: number[];
+}
+
+const sameResult = (a: CheckResult | null, b: CheckResult | null): boolean =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.at === b.at &&
+    a.ok === b.ok &&
+    a.latency_ms === b.latency_ms &&
+    a.status_code === b.status_code &&
+    a.error === b.error);
+
+const isNewerResult = (previous: CheckResult | null, next: CheckResult | null): next is CheckResult => {
+  if (next === null) return false;
+  if (previous === null) return true;
+  const before = Date.parse(previous.at);
+  const after = Date.parse(next.at);
+  return Number.isFinite(after) && (!Number.isFinite(before) || after > before);
+};
+
+function applyCheckUpdate(check: Check, update: StreamCheckUpdate): Check {
+  if (
+    check.status === update.status &&
+    check.uptime_24h === update.uptime_24h &&
+    check.tls_days_left === update.tls_days_left &&
+    check.maintenance === update.maintenance &&
+    sameResult(check.last, update.last)
+  ) {
+    return check;
+  }
+  // The stream carries only the latest result: append it so the sparkline moves between list fetches.
+  const latencySpark = isNewerResult(check.last, update.last)
+    ? [...check.latency_spark, update.last.latency_ms].slice(-CHECK_SPARK_POINTS)
+    : check.latency_spark;
+  return {
+    ...check,
+    status: update.status,
+    last: update.last,
+    uptime_24h: update.uptime_24h,
+    tls_days_left: update.tls_days_left,
+    maintenance: update.maintenance,
+    latency_spark: latencySpark,
+  };
+}
+
+/** Merges a `checks` SSE payload into the GET /checks cache entry. */
+export function patchChecksList(current: ChecksResponse, updates: readonly StreamCheckUpdate[]): ChecksPatchResult {
+  const byId = new Map(updates.map((update) => [update.id, update]));
+  let changed = false;
+  const checks: Check[] = [];
+  for (const check of current.checks) {
+    const update = byId.get(check.id);
+    byId.delete(check.id);
+    const next = update ? applyCheckUpdate(check, update) : check;
+    if (next !== check) changed = true;
+    checks.push(next);
+  }
+  return { next: changed ? { ...current, checks } : current, unknownIds: [...byId.keys()] };
+}
+
+/** Applies a +/- change to one check's open_incidents in the list cache. */
+export function bumpCheckOpenIncidents(current: ChecksResponse, checkId: number, delta: number): ChecksResponse {
+  if (delta === 0 || !current.checks.some((check) => check.id === checkId)) return current;
+  return {
+    ...current,
+    checks: current.checks.map((check) =>
+      check.id === checkId ? { ...check, open_incidents: Math.max(0, check.open_incidents + delta) } : check,
+    ),
+  };
+}
+
+/** Replaces one check in the list cache (after a create, update or toggle). */
+export function upsertCheck(current: ChecksResponse, check: Check): ChecksResponse {
+  const exists = current.checks.some((item) => item.id === check.id);
+  return { ...current, checks: exists ? current.checks.map((item) => (item.id === check.id ? check : item)) : [...current.checks, check] };
 }

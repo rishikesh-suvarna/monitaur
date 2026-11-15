@@ -2,7 +2,7 @@
  * Builders for test data. They only fill required fields with neutral values;
  * tests state the fields they care about explicitly.
  */
-import type { Incident, ServerLatest, ServerSummary } from '../api/types';
+import type { Check, Incident, MaintenanceWindow, ServerLatest, ServerSummary } from '../api/types';
 
 /**
  * A live sample as an older agent sends it: the section 6.1 host metrics are
@@ -76,6 +76,45 @@ export function makeIncident(overrides: Partial<Incident> & Pick<Incident, 'id' 
     last_notified_at: null,
     notified_channels: [],
     next_notify_at: null,
+    check_id: null,
+    check_name: null,
+    silenced: false,
+    ...overrides,
+  };
+}
+
+export function makeCheck(overrides: Partial<Check> & Pick<Check, 'id' | 'name'>): Check {
+  return {
+    type: 'http',
+    target: 'https://example.test/health',
+    interval_seconds: 60,
+    timeout_seconds: 10,
+    expect_status: 0,
+    keyword: '',
+    tls_warn_days: 14,
+    enabled: true,
+    channel_ids: [],
+    status: 'up',
+    last: null,
+    uptime_24h: null,
+    latency_spark: [],
+    tls_days_left: null,
+    open_incidents: 0,
+    maintenance: false,
+    created_at: '2026-11-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function makeWindow(
+  overrides: Partial<MaintenanceWindow> & Pick<MaintenanceWindow, 'id' | 'starts_at' | 'ends_at'>,
+): MaintenanceWindow {
+  return {
+    name: `window-${overrides.id}`,
+    scope: { all: true, server_ids: [], tags: [], check_ids: [] },
+    created_by: null,
+    created_at: '2026-11-01T00:00:00Z',
+    state: 'scheduled',
     ...overrides,
   };
 }

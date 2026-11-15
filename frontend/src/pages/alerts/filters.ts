@@ -3,14 +3,14 @@
  * works), mapped onto GET /incidents params where the API can filter and
  * applied locally where it cannot (network covers net_in and net_out).
  */
-import type { Incident, IncidentState, MetricKey, Severity } from '../../api/types';
+import type { Incident, IncidentMetric, IncidentState, Severity } from '../../api/types';
 import type { IncidentPageFilters } from '../../hooks/api/incidentPages';
 import { presentIncident } from '../../lib/status';
 
 export const STATE_TABS = ['open', 'acked', 'resolved', 'all'] as const;
 export type StateTab = (typeof STATE_TABS)[number];
 
-export const TYPE_FILTERS = ['all', 'cpu', 'memory', 'disk', 'network', 'unreachable'] as const;
+export const TYPE_FILTERS = ['all', 'cpu', 'memory', 'disk', 'network', 'unreachable', 'uptime'] as const;
 export type TypeFilter = (typeof TYPE_FILTERS)[number];
 
 export const TYPE_LABELS: Record<TypeFilter, string> = {
@@ -20,15 +20,17 @@ export const TYPE_LABELS: Record<TypeFilter, string> = {
   disk: 'Disk',
   network: 'Network',
   unreachable: 'Unreachable',
+  uptime: 'Uptime checks',
 };
 
 /** Which incident metrics each type covers. */
-const TYPE_METRICS: Record<Exclude<TypeFilter, 'all'>, readonly MetricKey[]> = {
+const TYPE_METRICS: Record<Exclude<TypeFilter, 'all'>, readonly IncidentMetric[]> = {
   cpu: ['cpu'],
   memory: ['memory'],
   disk: ['disk'],
   network: ['net_in', 'net_out'],
   unreachable: ['heartbeat'],
+  uptime: ['http', 'tcp', 'tls', 'tls_expiry'],
 };
 
 export const SEVERITIES: readonly Severity[] = ['critical', 'warning'];
