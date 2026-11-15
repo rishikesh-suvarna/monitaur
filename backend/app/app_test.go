@@ -276,6 +276,10 @@ func TestEndToEnd(t *testing.T) {
 	if status["title"] != "Alice status" || len(list(status, "services")) != 1 {
 		t.Fatalf("status page = %v", status)
 	}
+	// Nothing has been flushed yet, so uptime is unknown, not ~0%.
+	if svc := list(status, "services")[0].(map[string]any); svc["uptime_pct"] != nil {
+		t.Fatalf("uptime before any flush = %v, want null", svc["uptime_pct"])
+	}
 
 	// SSE stream delivers a servers snapshot.
 	req, _ := http.NewRequest("GET", e.srv.URL+"/api/v1/stream", nil)

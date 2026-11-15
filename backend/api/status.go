@@ -112,6 +112,7 @@ func (a *API) buildStatus(c *gin.Context, slug string, now time.Time) (int, gin.
 		}
 	}
 
+	flushedThrough := a.Metrics.Stats().LastFlush
 	overall := statusHealthy
 	rank := map[string]int{statusHealthy: 0, statusWarning: 1, statusOffline: 2, statusCritical: 3}
 	services := make([]gin.H, 0, len(servers))
@@ -124,13 +125,12 @@ func (a *API) buildStatus(c *gin.Context, slug string, now time.Time) (int, gin.
 		dayList := make([]gin.H, 0, statusDays)
 		for d := since; !d.After(today); d = d.AddDate(0, 0, 1) {
 			key := d.Format(time.DateOnly)
-			expected := minutesPerDay
-			if d.Equal(today) {
-				expected = max(1, int(now.Sub(today).Minutes()))
-			}
-			createdDay := s.CreatedAt.UTC().Truncate(24 * time.Hour)
-			if d.Before(createdDay) {
-				dayList = append(dayList, gin.H{"day": key, "pct": nil, "worst": nil})
+			// Uptime minutes reach the database at each flush, so a day is
+			// measured from when the server existed until the last flush.
+			start, end := maxTime(d, s.CreatedAt.UTC()), minTime(d.Add(24*time.Hour), flushedThrough)
+			expected := int(end.Sub(start) / time.Minute)
+			if expected < 1 {
+				dayList = append(dayList, gin.H{"day": key, "pct": nil, "worst": worstOrNil(worstByDay[s.ID], key)})
 				continue
 			}
 			up := min(minutesByServer[s.ID][key], expected)
@@ -142,7 +142,7 @@ func (a *API) buildStatus(c *gin.Context, slug string, now time.Time) (int, gin.
 			}
 			dayList = append(dayList, gin.H{"day": key, "pct": float64(up) * 100 / float64(expected), "worst": worst})
 		}
-		pct := 100.0
+		var pct any // null until the first flush has measured anything
 		if expectedTotal > 0 {
 			pct = float64(upTotal) * 100 / float64(expectedTotal)
 		}
@@ -168,3 +168,24 @@ func (a *API) buildStatus(c *gin.Context, slug string, now time.Time) (int, gin.
 }
 
 const minutesPerDay = 24 * 60
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func worstOrNil(byDay map[string]string, key string) any {
+	if w, ok := byDay[key]; ok {
+		return w
+	}
+	return nil
+}

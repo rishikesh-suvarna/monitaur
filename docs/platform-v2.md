@@ -464,7 +464,7 @@ interface Plan {   // GET /org .plan; 0 means unlimited
 }
 interface PublicStatus {  // GET /public/status/:slug (cached 60 s)
   title: string; overall: 'healthy'|'warning'|'critical'|'offline'; updated_at: string;
-  services: { name: string; status: string; uptime_pct: number;
+  services: { name: string; status: string; uptime_pct: number | null;  // null until the first metrics flush
               days: { day: string; pct: number | null; worst: 'warning'|'critical'|null }[] }[];  // 90 days, oldest first; pct null before the server existed
   incidents: { service: string; metric: string; severity: string; started_at: string; resolved_at: string | null }[];
 }
