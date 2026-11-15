@@ -10,7 +10,7 @@ Monitaur is a self-hosted server monitoring tool. Three deployables in one repo,
 |---|---|---|
 | `agent/` | Binary installed on each monitored host. Collects CPU/mem/disk/net via gopsutil and streams JSON over WebSocket. | Go 1.24, gorilla/websocket, viper |
 | `backend/` | Multi-tenant API, agent WebSocket hub, in-memory metrics (B2), alert rules engine, notification channels, SSE, public status pages. | Go 1.24, Gin, pgx v5 + goose, Postgres (Neon), Firebase Admin |
-| `frontend/` | Dashboard SPA. | React 19 (JSX, not TS), Vite 7, Tailwind 3, TanStack Query 5, Recharts 3, Firebase Auth |
+| `frontend/` | Dashboard SPA (the "Monitaur dashboard redesign" canvas). | React 19, TypeScript strict, Vite 7, Tailwind 3, TanStack Query 5, React Router 7, Recharts 3, Headless UI 2, Firebase Auth |
 
 Live deployment: backend runs as a systemd service (`monitaur-backend`) on an Ubuntu VM, frontend is a static build copied to the same VM, DB is Neon serverless Postgres.
 
@@ -52,11 +52,14 @@ backend/
   limits/              token-bucket rate limiter, daily email budget
   secrets/             AES-GCM box (channel configs), token generation and hashing
   testdb/              per-test throwaway Postgres databases
-frontend/src/
-  config/api.js        axios instance + auth interceptor
-  apis/index.js        typed-ish endpoint wrappers
-  contexts/AuthContext.jsx
-  components/          one file per page (Dashboard, ServersPage, ServerDetail, AlertsPage, SettingsPage, Login) + Layout, Router
+frontend/src/          (details: frontend/README.md)
+  api/                 typed client, endpoints, ApiError, query keys (org-scoped), SSE parser, cache patches
+  providers/           Theme, Motion, Auth, Org, LiveStream (fetch-based SSE)
+  hooks/               one TanStack Query hook per endpoint + UI hooks
+  components/          design system (StatusBadge, Logo, Dino, Sparkline, ...); components/layout/ is the app shell
+  pages/               one folder per screen
+  routes/              router, RequireAuth, RouteError
+  styles/tokens.css    design tokens (dark default, light parity) as RGB channels
 install.sh             curl | sudo bash agent installer (pulls GitHub release)
 .github/workflows/     agent-release (on tag), backend-deploy, frontend-deploy (on push to main, path-filtered)
 ```
@@ -81,20 +84,21 @@ go run . -init          # writes sample config.json (gitignored)
 go run .                # needs a valid token from the dashboard
 ./scripts/build.sh      # cross-compile all platforms into build/
 
-# frontend (repo uses yarn: yarn.lock + CI runs `corepack enable && yarn install --immutable`)
+# frontend (Yarn 1; CI runs `yarn install --frozen-lockfile`, which actually enforces the lockfile)
 cd frontend
 yarn dev                # http://localhost:5173
-yarn build && yarn lint
+yarn typecheck && yarn lint && yarn test && yarn build
 ```
 
-The frontend lockfile is yarn. Do not switch to bun or npm without also updating `frontend-deploy.yml`; if migrating, do it as its own PR.
+The frontend lockfile is yarn. Do not switch to bun or npm without also updating the workflows; if migrating, do it as its own PR.
 
-Required env for the frontend: `VITE_APP_SERVER_URL`, `VITE_APP_SERVER_WS_URL` (shown in the add-server agent snippet), plus the `VITE_FIREBASE_*` keys read in `src/config/firebase.js` (local values live in the gitignored `.env.development.local`).
+Frontend env (validated at startup, see `frontend/README.md`): `VITE_APP_SERVER_URL`, `VITE_APP_SERVER_WS_URL`, `VITE_FIREBASE_*`, and optional `VITE_FIREBASE_APPCHECK_SITE_KEY`. Local values live in the gitignored `.env.development.local`.
 
 ## Tests
 
 - Backend: table-driven unit tests per package; `store/` and `app/` tests use `testdb` (real Postgres, one database per test). `store/store_test.go` `TestMigrateLegacyDatabase` reproduces the v1 production schema and data; keep it passing for any migration change. `app/app_test.go` drives the fully wired app (fake Firebase verifier, real agent WebSocket, cross-tenant checks).
 - Agent: `agent/client` has lifecycle tests (`go test -race`).
+- Frontend: Vitest unit tests for logic (formatters, mapping, API errors, data shaping). Screens are checked against the design canvas in a browser; never commit API mocks into the app.
 - New code ships with tests; cross-tenant access paths get a 404 assertion.
 
 ## Conventions and gotchas
