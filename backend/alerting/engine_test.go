@@ -904,3 +904,49 @@ func TestEngineConcurrentObserve(t *testing.T) {
 		t.Fatal("the run never fired; the test is not exercising transitions")
 	}
 }
+
+// Regression: with For == 0, a breach right after an auto-resolve used to
+// open the next incident while the previous resolve was still in flight, so
+// the store briefly held two open incidents for one pair and "fired" could
+// go out before "resolved".
+func TestNextIncidentWaitsForPreviousResolve(t *testing.T) {
+	r := cpuRule(1, 50, 0, 0)
+	h := newHarness(t, []Rule{r}, []ServerInfo{srv(1)})
+	breach, calm := metrics.Point{CPU: 90}, metrics.Point{CPU: 10}
+
+	h.eng.Observe(h.ctx, 1, breach)
+	if n := len(h.store.opens); n != 1 {
+		t.Fatalf("opens after first breach = %d, want 1", n)
+	}
+
+	gate, entered := make(chan struct{}), make(chan struct{})
+	h.store.mu.Lock()
+	h.store.resolveGate, h.store.resolveEntered = gate, entered
+	h.store.mu.Unlock()
+	resolved := make(chan struct{})
+	go func() {
+		defer close(resolved)
+		h.eng.Observe(h.ctx, 1, calm) // auto-resolve; blocks inside the store
+	}()
+	<-entered
+
+	h.eng.Observe(h.ctx, 1, breach) // must wait: the resolve has not landed
+	h.store.mu.Lock()
+	opensWhileResolving := len(h.store.opens)
+	h.store.mu.Unlock()
+	if opensWhileResolving != 1 {
+		t.Fatalf("opened a new incident while the previous resolve was in flight (opens = %d)", opensWhileResolving)
+	}
+
+	close(gate)
+	<-resolved
+	h.store.mu.Lock()
+	h.store.resolveGate, h.store.resolveEntered = nil, nil
+	h.store.mu.Unlock()
+
+	h.eng.Observe(h.ctx, 1, breach) // now it fires
+	if n := len(h.store.opens); n != 2 {
+		t.Fatalf("opens after the resolve landed = %d, want 2", n)
+	}
+	h.noViolations()
+}

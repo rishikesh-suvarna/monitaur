@@ -79,6 +79,9 @@ type fakeStore struct {
 	// is closed, to hold an open in flight.
 	gate    chan struct{}
 	entered chan struct{}
+	// resolveGate does the same for ResolveIncident.
+	resolveGate    chan struct{}
+	resolveEntered chan struct{}
 }
 
 func newFakeStore() *fakeStore {
@@ -130,6 +133,13 @@ func (s *fakeStore) OpenIncident(_ context.Context, inc Incident) (int64, error)
 }
 
 func (s *fakeStore) ResolveIncident(_ context.Context, id int64, at time.Time, how ResolveHow, peak float64, samplesOver int) error {
+	s.mu.Lock()
+	gate, entered := s.resolveGate, s.resolveEntered
+	s.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failResolve > 0 {

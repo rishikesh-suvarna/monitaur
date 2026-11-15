@@ -167,8 +167,6 @@ func (a *API) buildStatus(c *gin.Context, slug string, now time.Time) (int, gin.
 	return http.StatusOK, gin.H{"title": title, "overall": overall, "updated_at": now.UTC(), "services": services, "incidents": recent}
 }
 
-const minutesPerDay = 24 * 60
-
 func maxTime(a, b time.Time) time.Time {
 	if a.After(b) {
 		return a

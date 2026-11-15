@@ -35,7 +35,14 @@ type Engine struct {
 	lastBeat   map[int64]time.Time             // last heartbeat by server ID
 	states     map[int64]map[int64]*alertState // server ID -> rule ID -> state; absent means ok
 	byIncident map[int64]*alertState           // incidents open in the store
+	// resolving counts resolve writes in flight per pair. A new incident for
+	// a pair is not opened until they land, so the store never holds two
+	// open incidents for one pair and "resolved" always goes out before the
+	// next "fired".
+	resolving map[pairKey]int
 }
+
+type pairKey struct{ serverID, ruleID int64 }
 
 // alertState is a (rule, server) pair that is not ok.
 type alertState struct {
@@ -62,6 +69,8 @@ type abandonment struct {
 	at     time.Time
 	how    ResolveHow
 	notify bool
+	// counted is true when the parked resolution was added to resolving.
+	counted bool
 }
 
 func (st *alertState) incident() Incident {
@@ -129,6 +138,10 @@ type action struct {
 	at     time.Time
 	how    ResolveHow // actResolve
 	notify bool       // actResolve: emit EventResolved on success
+	// counted: actResolve was added to resolving for pair and must be
+	// released once the write finishes.
+	counted bool
+	pair    pairKey
 }
 
 // NewEngine returns an empty engine; call Load before feeding it data.
@@ -159,6 +172,27 @@ func (e *Engine) resetLocked() {
 	e.lastBeat = make(map[int64]time.Time)
 	e.states = make(map[int64]map[int64]*alertState)
 	e.byIncident = make(map[int64]*alertState)
+	e.resolving = make(map[pairKey]int)
+}
+
+func (e *Engine) beginResolveLocked(k pairKey) { e.resolving[k]++ }
+
+func (e *Engine) endResolveLocked(k pairKey) {
+	if n := e.resolving[k]; n > 1 {
+		e.resolving[k] = n - 1
+	} else {
+		delete(e.resolving, k)
+	}
+}
+
+func (e *Engine) endResolve(k pairKey) {
+	e.mu.Lock()
+	e.endResolveLocked(k)
+	e.mu.Unlock()
+}
+
+func (e *Engine) resolvingLocked(serverID, ruleID int64) bool {
+	return e.resolving[pairKey{serverID, ruleID}] > 0
 }
 
 // Load replaces all engine state at startup: rules, servers and the open
@@ -209,7 +243,9 @@ func (e *Engine) restoreLocked(inc Incident, now time.Time) (action, bool) {
 	orphan := func(how ResolveHow) (action, bool) {
 		e.log.Info("resolving stale incident on load", "incident_id", inc.ID, "rule_id", inc.RuleID,
 			"server_id", inc.ServerID, "how", how)
-		return action{kind: actResolve, inc: inc, at: now, how: how}, true
+		k := pairKey{inc.ServerID, inc.RuleID}
+		e.beginResolveLocked(k)
+		return action{kind: actResolve, inc: inc, at: now, how: how, counted: true, pair: k}, true
 	}
 	srv, ok := e.servers[inc.ServerID]
 	if !ok {
@@ -376,6 +412,13 @@ func (e *Engine) Observe(ctx context.Context, serverID int64, p metrics.Point) {
 		}
 		switch st.observe(r, v, now, now) {
 		case fire:
+			if e.resolvingLocked(serverID, r.ID) {
+				// The previous incident's resolve has not landed yet: stay
+				// pending (breach start and peak kept) and fire on the next
+				// sample.
+				st.phase = phasePending
+				continue
+			}
 			acts = append(acts, e.fireLocked(st, now))
 		case resolve:
 			if a, ok := e.detachLocked(st, now, ResolvedAuto); ok {
@@ -447,8 +490,8 @@ func (e *Engine) Tick(ctx context.Context) {
 				st.peak = max(st.peak, secs)
 				continue
 			}
-			if silent < r.For {
-				continue
+			if silent < r.For || e.resolvingLocked(id, r.ID) {
+				continue // not silent long enough, or the last one is still resolving
 			}
 			st := e.newStateLocked(r, srv)
 			// Heartbeat rules skip pending: For is measured from the last
@@ -512,12 +555,17 @@ func (e *Engine) Resolve(ctx context.Context, incidentID int64, at time.Time) er
 	}
 	e.mu.Unlock()
 
-	if err := e.store.ResolveIncident(ctx, incidentID, at, ResolvedManual, a.inc.Peak, a.inc.SamplesOver); err != nil {
-		e.mu.Lock()
+	err := e.store.ResolveIncident(ctx, incidentID, at, ResolvedManual, a.inc.Peak, a.inc.SamplesOver)
+	e.mu.Lock()
+	if a.counted {
+		e.endResolveLocked(a.pair)
+	}
+	if err != nil {
 		e.reattachLocked(st, prevPhase)
 		e.mu.Unlock()
 		return fmt.Errorf("resolve incident %d: %w", incidentID, err)
 	}
+	e.mu.Unlock()
 	e.notifier.Notify(context.WithoutCancel(ctx), Event{Kind: EventResolved, Incident: a.inc, Rule: a.rule, Server: a.server, At: at})
 	return nil
 }
@@ -639,16 +687,19 @@ func (e *Engine) removeLocked(st *alertState) {
 // parked so the opener resolves it once the ID is known.
 func (e *Engine) detachLocked(st *alertState, at time.Time, how ResolveHow) (action, bool) {
 	e.removeLocked(st)
+	k := pairKey{st.server.ID, st.rule.ID}
 	if st.opening {
-		st.abandoned = &abandonment{at: at, how: how, notify: how.notifies()}
+		e.beginResolveLocked(k)
+		st.abandoned = &abandonment{at: at, how: how, notify: how.notifies(), counted: true}
 		return action{}, false
 	}
 	if st.inc.ID == 0 {
 		return action{}, false // pending: nothing in the store
 	}
+	e.beginResolveLocked(k)
 	return action{
 		kind: actResolve, state: st, inc: st.incident(), rule: st.rule, server: st.server,
-		at: at, how: how, notify: how.notifies(),
+		at: at, how: how, notify: how.notifies(), counted: true, pair: k,
 	}, true
 }
 
@@ -732,6 +783,10 @@ func (e *Engine) open(ctx context.Context, a action) {
 	st := a.state
 	if err != nil {
 		e.mu.Lock()
+		if st.abandoned != nil && st.abandoned.counted {
+			// Nothing reached the store, so there is nothing to resolve.
+			e.endResolveLocked(pairKey{st.server.ID, st.rule.ID})
+		}
 		e.failOpenLocked(st)
 		e.mu.Unlock()
 		e.log.Error("open incident failed; retrying on the next breach", "rule_id", a.rule.ID,
@@ -765,9 +820,13 @@ func (e *Engine) open(ctx context.Context, a action) {
 		e.mu.Unlock()
 		return
 	}
+	k := pairKey{st.server.ID, st.rule.ID}
+	if !ab.counted {
+		e.beginResolveLocked(k)
+	}
 	final := action{
 		kind: actResolve, state: st, inc: st.incident(), rule: st.rule, server: st.server,
-		at: ab.at, how: ab.how, notify: ab.notify,
+		at: ab.at, how: ab.how, notify: ab.notify, counted: true, pair: k,
 	}
 	e.mu.Unlock()
 	e.resolve(ctx, final)
@@ -777,6 +836,11 @@ func (e *Engine) resolve(ctx context.Context, a action) {
 	sctx, cancel := context.WithTimeout(ctx, storeCallTimeout)
 	err := e.store.ResolveIncident(sctx, a.inc.ID, a.at, a.how, a.inc.Peak, a.inc.SamplesOver)
 	cancel()
+	if a.counted {
+		// Released after EventResolved goes out, so a breach waiting on this
+		// pair opens (and notifies) the next incident strictly afterwards.
+		defer e.endResolve(a.pair)
+	}
 	if err != nil {
 		retry := false
 		if a.how == ResolvedAuto && a.state != nil {
