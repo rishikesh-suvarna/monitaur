@@ -8,6 +8,17 @@ on:
       - '.github/workflows/backend-deploy.yml'
   workflow_dispatch:
 
+# Two quick pushes must not interleave install/restart steps on the VM.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  STAGING_DIR: /tmp/monitaur-backend-deploy
+  INSTALL_PATH: /usr/local/bin/monitaur-backend
+  SERVICE_NAME: monitaur-backend
+  HEALTH_URL: http://localhost:8080/health
+
 jobs:
   deploy:
     name: Build and Deploy to Ubuntu Server
@@ -20,39 +31,24 @@ jobs:
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version-file: backend/go.mod
+        cache-dependency-path: backend/go.sum
+
+    - name: Vet and test
+      working-directory: ./backend
+      run: |
+        go vet ./...
+        go test ./...
 
     - name: Build backend binary
       working-directory: ./backend
       run: |
-        echo "Building backend for Linux AMD64..."
-        go mod download
-        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -trimpath -o monitaur-backend .
-
-        # Verify binary was created
+        # CGO off gives a static binary, so the VM's glibc version cannot
+        # break a binary built on a newer runner image.
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o monitaur-backend .
         ls -la monitaur-backend
         file monitaur-backend
-
-    - name: Deploy to server
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: ${{ secrets.PORT }}
-        script: |
-          echo "Starting backend deployment"
-
-          # Create temporary directory
-          TEMP_DIR="/tmp/monitaur-deploy-$(date +%s)"
-          mkdir -p $TEMP_DIR
-          echo "Created temporary directory: $TEMP_DIR"
-
-          # Backup current binary (optional)
-          if [ -f /usr/local/bin/monitaur-backend ]; then
-            echo "Backing up current binary..."
-            sudo cp /usr/local/bin/monitaur-backend $TEMP_DIR/monitaur-backend.backup
-          fi
+        sha256sum monitaur-backend | tee monitaur-backend.sha256
 
     - name: Copy binary to server
       uses: appleboy/scp-action@v0.1.7
@@ -61,11 +57,16 @@ jobs:
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
-        source: "./backend/monitaur-backend"
-        target: "/tmp/"
+        source: "backend/monitaur-backend,backend/monitaur-backend.sha256"
+        target: ${{ env.STAGING_DIR }}
+        # Strips the leading "backend/" so files land directly in STAGING_DIR.
+        # The previous "./backend/..." source counted "." as the first
+        # component, so the binary landed in /tmp/backend/ and was never
+        # installed. The install step below verifies the path and checksum.
         strip_components: 1
+        rm: true
 
-    - name: Install and restart service
+    - name: Install, restart, health check (rolls back on failure)
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.HOST }}
@@ -73,71 +74,72 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
         script: |
-          echo "Installing new binary..."
+          set -eu
 
-          # Stop the service first
-          echo "Stopping monitaur-backend service..."
-          sudo systemctl stop monitaur-backend || echo "Service was not running"
+          STAGING_DIR="${{ env.STAGING_DIR }}"
+          INSTALL_PATH="${{ env.INSTALL_PATH }}"
+          SERVICE_NAME="${{ env.SERVICE_NAME }}"
+          HEALTH_URL="${{ env.HEALTH_URL }}"
+          NEW_BIN="$STAGING_DIR/monitaur-backend"
+          PREV_BIN="$INSTALL_PATH.prev"
+          HEALTH_ATTEMPTS=15
+          HEALTH_INTERVAL_SECONDS=2
 
-          # Replace binary
-          sudo mv /tmp/monitaur-backend /usr/local/bin/
-          sudo chmod +x /usr/local/bin/monitaur-backend
-          sudo chown root:root /usr/local/bin/monitaur-backend
+          # Atomic swap: install next to the target, then rename over it.
+          # Safe while the old binary is running (no "text file busy").
+          swap_in() {
+            sudo install -m 0755 -o root -g root "$1" "$INSTALL_PATH.new"
+            sudo mv -f "$INSTALL_PATH.new" "$INSTALL_PATH"
+          }
 
-          # Verify binary
-          echo "Verifying binary..."
-          /usr/local/bin/monitaur-backend -version || echo "Version check failed"
+          is_healthy() {
+            i=0
+            while [ "$i" -lt "$HEALTH_ATTEMPTS" ]; do
+              if sudo systemctl is-active --quiet "$SERVICE_NAME" \
+                && curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null; then
+                return 0
+              fi
+              i=$((i + 1))
+              sleep "$HEALTH_INTERVAL_SECONDS"
+            done
+            return 1
+          }
 
-          # Start the service
-          echo "▶️  Starting monitaur-backend service..."
-          sudo systemctl start monitaur-backend
-
-          # Wait for service to start
-          sleep 5
-
-          # Check service status
-          echo "Checking service status..."
-          if sudo systemctl is-active --quiet monitaur-backend; then
-            echo "Service is running successfully!"
-            sudo systemctl status monitaur-backend --no-pager -l
-          else
-            echo "Service failed to start!"
-            echo "Service logs:"
-            sudo journalctl -u monitaur-backend --no-pager -l -n 20
+          if [ ! -f "$NEW_BIN" ]; then
+            echo "ERROR: new binary not found at $NEW_BIN. Staging dir contains:"
+            ls -la "$STAGING_DIR" || true
             exit 1
           fi
+          (cd "$STAGING_DIR" && sha256sum -c monitaur-backend.sha256)
 
-          # Test health endpoint
-          echo "Testing health endpoint..."
-          sleep 3
-          if curl -f http://localhost:8080/health; then
-            echo "Health check passed!"
+          if [ -f "$INSTALL_PATH" ]; then
+            echo "Keeping current binary as $PREV_BIN"
+            sudo cp -p "$INSTALL_PATH" "$PREV_BIN"
+          fi
+
+          echo "Installing new binary"
+          swap_in "$NEW_BIN"
+          sudo systemctl restart "$SERVICE_NAME"
+
+          if is_healthy; then
+            echo "Deployed: $(sha256sum "$INSTALL_PATH" | cut -d' ' -f1)"
+            rm -rf "$STAGING_DIR"
+            exit 0
+          fi
+
+          echo "ERROR: new binary failed health check. Recent logs:"
+          sudo journalctl -u "$SERVICE_NAME" --no-pager -n 50 || true
+
+          if [ -f "$PREV_BIN" ]; then
+            echo "Rolling back to previous binary"
+            swap_in "$PREV_BIN"
+            sudo systemctl restart "$SERVICE_NAME"
+            if is_healthy; then
+              echo "Rollback succeeded; previous binary is serving"
+            else
+              echo "ERROR: rollback also failed health check, service is DOWN"
+            fi
           else
-            echo "Health check failed, but service is running"
+            echo "ERROR: no previous binary to roll back to"
           fi
-
-          echo "Deployment completed successfully!"
-
-    - name: Cleanup on failure
-      if: failure()
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: ${{ secrets.PORT }}
-        script: |
-          echo "Deployment failed, attempting rollback..."
-
-          # Restore backup if it exists
-          if [ -f /tmp/monitaur-deploy-*/monitaur-backend.backup ]; then
-            echo "Restoring backup..."
-            sudo cp /tmp/monitaur-deploy-*/monitaur-backend.backup /usr/local/bin/monitaur-backend
-            sudo chmod +x /usr/local/bin/monitaur-backend
-            sudo systemctl restart monitaur-backend
-            echo "Rollback completed"
-          fi
-
-          # Cleanup temp files
-          rm -rf /tmp/monitaur-deploy-*
-          rm -f /tmp/monitaur-backend
+          exit 1
