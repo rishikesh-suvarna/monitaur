@@ -409,9 +409,9 @@ Authorization and SQL safety are good. The weak spots are (1) the agent's WebSoc
 
 | Step | State | Where |
 |---|---|---|
-| 1 Deploy ships | Done: broken path confirmed on the VM and fixed; actions pinned; journal dir | PR #2 `fix/backend-deploy-install` |
-| 2 Hotfixes | Done. Agent: PR #1, then `feat/agent-v2`. Backend items are built into v2 (the v1 handlers were replaced, so patching them first would have been throwaway) | PR #1, `feat/agent-v2`, `feat/platform-v2` |
-| 3 Foundations | Done: goose migrations, PR CI for agent, backend (with Postgres) and frontend | `fix/infra-hardening` (ci.yml), `feat/platform-v2` |
+| 1 Deploy ships | Done and live: broken path confirmed on the VM and fixed; actions pinned; journal dir. Merged 2026-11-15; the deploy installed the new binary and passed its health check | PR #2 (merged) |
+| 2 Hotfixes | Done. Agent: PR #1, then #4, both merged 2026-11-15 (the release tag waits for #7). Backend items are built into v2 (the v1 handlers were replaced, so patching them first would have been throwaway) | PR #1, `feat/agent-v2`, `feat/platform-v2` |
+| 3 Foundations | Done: goose migrations, PR CI for agent, backend (with Postgres) and frontend (CI merged with #3 on 2026-11-15 and runs on every PR) | `fix/infra-hardening` (ci.yml), `feat/platform-v2` |
 | 4 Phase A | Done, folded into v2: no per-message writes, server-side alert state machine with F1, quiet logging, identity and role caches, incident indexes | `feat/platform-v2` |
 | 5 B2 | Done: metrics store, rollups, journal, flush window, `/series`, directory caches, legacy backfill job | `feat/platform-v2` |
 | 6 MT core | Done: verified-email gate, App Check (opt-in), rate limits, orgs, memberships, invites, plans and quotas, hashed tokens with rotation | `feat/platform-v2` |

@@ -5,8 +5,8 @@ The runbook for shipping the open PRs. Each step needs access only you have (Neo
 ## 0. Before anything
 
 ```bash
-gh pr list --state open      # expect #1 to #8
-gh pr checks 5               # CI from #3 runs once #3 is merged; until then rely on the PR descriptions' local results
+gh pr list --state open      # expect #5 to #8 (#1 to #4 merged 2026-11-15)
+gh pr checks 5               # PR CI (from #3) runs on every open PR
 ```
 
 ## 1. Neon restore point (required before #5)
@@ -20,7 +20,9 @@ neonctl branches create --project-id <project-id> --name pre-v2-$(date +%Y%m%d) 
 
 Or in the console: Branches, New branch, parent `main`, "Current point in time". Note the branch name.
 
-## 2. Pipeline fixes (#2, #3) and agent client (#1, #4)
+## 2. Pipeline fixes (#2, #3) and agent client (#1, #4): done
+
+Merged 2026-11-15. The backend deploy installed the new binary (`Deployed: 7156d76b...`, health check passed) and the frontend deploy swapped atomically; both answer 200. #7 was rebased onto `main` and retargeted there. Kept for reference:
 
 ```bash
 gh pr merge 2 --rebase          # backend deploys start installing the uploaded binary; redeploys today's code
@@ -65,16 +67,29 @@ log:
 
 ## 4. Backend v2 and the dashboard (#5, then #6 immediately)
 
+Rebase-merging gives the parent's commits new hashes, so a stacked PR conflicts until it is rebased onto `main` without them (#4 needed exactly this). Restack each child before merging it, and note the old tips first:
+
 ```bash
+git fetch origin
+OLD5=$(git rev-parse origin/feat/platform-v2)       # tip of #5 before it merges
+OLD6=$(git rev-parse origin/feat/frontend-redesign) # tip of #6 before it is restacked
+
 gh pr merge 5 --rebase && gh run watch          # backend deploy; health check must pass
+
+git fetch origin
+git switch feat/frontend-redesign && git reset --hard origin/feat/frontend-redesign
+git rebase --onto origin/main "$OLD5" && git push --force-with-lease origin feat/frontend-redesign
 gh pr edit 6 --base main && gh pr merge 6 --rebase && gh run watch   # the v1 dashboard cannot talk to v2
 ```
 
-Then #8, the monitoring additions (stacked on #6; migrations 00003 to 00005, all additive), and once it is live, #7, the agent side of F6 and F9 with gopsutil v4:
+Then #8, the monitoring additions (migrations 00003 to 00005, all additive), and once it is live, #7, the agent side of F6 and F9 with gopsutil v4 (already based on `main`):
 
 ```bash
+git fetch origin
+git switch feat/monitoring-additions && git reset --hard origin/feat/monitoring-additions
+git rebase --onto origin/main "$OLD6" && git push --force-with-lease origin feat/monitoring-additions
 gh pr edit 8 --base main && gh pr merge 8 --rebase && gh run watch
-gh pr edit 7 --base main && gh pr merge 7 --rebase
+gh pr merge 7 --rebase
 ```
 
 #7 must land after #8 is deployed: a backend without it drops the new `processes` messages, and the release in step 5 should carry #7.
@@ -90,7 +105,7 @@ Expected right after deploy: the seeded `host-unreachable` rule raises a critica
 
 ## 5. Agent release
 
-After #3, #4 and #7 are on `main`:
+After #7 is on `main` (#3 and #4 already are):
 
 ```bash
 git switch main && git pull
