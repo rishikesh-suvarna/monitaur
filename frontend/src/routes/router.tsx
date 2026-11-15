@@ -15,6 +15,8 @@ const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 const ServerDetailPage = lazy(() => import('../pages/server-detail/ServerDetailPage'));
 const ServerSettingsPage = lazy(() => import('../pages/server-settings/ServerSettingsPage'));
 const AlertsPage = lazy(() => import('../pages/alerts/AlertsPage'));
+const ChecksPage = lazy(() => import('../pages/checks/ChecksPage'));
+const CheckDetailPage = lazy(() => import('../pages/checks/CheckDetailPage'));
 const RulesPage = lazy(() => import('../pages/rules/RulesPage'));
 const ChannelsPage = lazy(() => import('../pages/channels/ChannelsPage'));
 const SettingsPage = lazy(() => import('../pages/settings/SettingsPage'));
@@ -36,6 +38,8 @@ export const router = createBrowserRouter([
           { index: true, element: <OverviewPage /> },
           { path: 'servers/:id', element: <ServerDetailPage /> },
           { path: 'servers/:id/settings', element: <ServerSettingsPage /> },
+          { path: 'checks', element: <ChecksPage /> },
+          { path: 'checks/:id', element: <CheckDetailPage /> },
           { path: 'alerts', element: <AlertsPage /> },
           { path: 'rules', element: <RulesPage /> },
           { path: 'channels', element: <ChannelsPage /> },

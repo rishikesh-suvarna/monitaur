@@ -3,7 +3,7 @@ import type { SeriesRange } from '../../api/types';
 import { EMPTY_VALUE } from '../../lib/format';
 import { TIME_RANGES } from '../../lib/ranges';
 
-export type ServerTab = 'metrics' | 'alerts' | 'settings';
+export type ServerTab = 'metrics' | 'processes' | 'alerts' | 'settings';
 
 export const VIEWER_EDIT_REASON = 'Viewers can’t edit servers. Ask an admin for the member role.';
 
@@ -16,6 +16,7 @@ const POSITIVE_INT = /^[1-9]\d*$/;
 
 export const serverDetailPath = (serverId: number): string => `/servers/${serverId}`;
 export const serverAlertsTabPath = (serverId: number): string => `/servers/${serverId}?${TAB_PARAM}=alerts`;
+export const serverProcessesTabPath = (serverId: number): string => `/servers/${serverId}?${TAB_PARAM}=processes`;
 export const serverSettingsPath = (serverId: number): string => `/servers/${serverId}/settings`;
 /** The Alerts page with this server preselected, every state. */
 export const alertsForServer = (serverId: number): string => `/alerts?server=${serverId}&state=all`;
@@ -28,7 +29,8 @@ export function parseServerId(raw: string | undefined): number | null {
 }
 
 export function parseTab(raw: string | null): Exclude<ServerTab, 'settings'> {
-  return raw === 'alerts' ? 'alerts' : 'metrics';
+  if (raw === 'alerts' || raw === 'processes') return raw;
+  return 'metrics';
 }
 
 export function parseRange(raw: string | null): SeriesRange {

@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { EMPTY_VALUE } from '../../lib/format';
 
-import { agentVersionLabel, alertsForServer, parseRange, parseServerId, parseTab, serverAlertsTabPath, serverSettingsPath } from './routes';
+import {
+  agentVersionLabel,
+  alertsForServer,
+  parseRange,
+  parseServerId,
+  parseTab,
+  serverAlertsTabPath,
+  serverProcessesTabPath,
+  serverSettingsPath,
+} from './routes';
 
 describe('route params', () => {
   it.each([
@@ -23,11 +32,14 @@ describe('route params', () => {
     expect(parseRange('2h')).toBe('6h');
     expect(parseRange(null)).toBe('6h');
     expect(parseTab('alerts')).toBe('alerts');
+    expect(parseTab('processes')).toBe('processes');
     expect(parseTab('settings')).toBe('metrics');
+    expect(parseTab(null)).toBe('metrics');
   });
 
   it('builds the tab and cross-page links', () => {
     expect(serverAlertsTabPath(4)).toBe('/servers/4?tab=alerts');
+    expect(serverProcessesTabPath(4)).toBe('/servers/4?tab=processes');
     expect(serverSettingsPath(4)).toBe('/servers/4/settings');
     expect(alertsForServer(4)).toBe('/alerts?server=4&state=all');
   });

@@ -13,6 +13,7 @@ import (
 const (
 	unitPercent = "%"
 	unitRate    = "B/s"
+	unitNone    = ""
 )
 
 // RuleToAlerting converts a stored rule for the engine.
@@ -54,13 +55,16 @@ func RulesToAlerting(rs []store.Rule) []alerting.Rule {
 
 func IncidentToAlerting(i store.Incident) alerting.Incident {
 	out := alerting.Incident{
-		ID: i.ID, OrgID: i.OrgID, ServerID: i.ServerID, RuleName: i.RuleName,
+		ID: i.ID, OrgID: i.OrgID, RuleName: i.RuleName,
 		Metric: alerting.Metric(i.Metric), Severity: alerting.Severity(i.Severity),
 		Threshold: i.Threshold, Peak: i.Peak, LastValue: i.LastValue, SamplesOver: i.SamplesOver,
 		StartedAt: i.StartedAt, LastNotifiedAt: i.LastNotifiedAt, AckedAt: i.AckedAt,
 	}
 	if i.RuleID != nil {
 		out.RuleID = *i.RuleID
+	}
+	if i.ServerID != nil {
+		out.ServerID = *i.ServerID
 	}
 	return out
 }
@@ -76,11 +80,14 @@ func ChannelToNotify(c store.Channel) (notify.Channel, error) {
 // UnitFor is how a metric's values are displayed.
 func UnitFor(metric string) string {
 	switch alerting.Metric(metric) {
-	case alerting.MetricCPU, alerting.MetricMemory, alerting.MetricDisk:
+	case alerting.MetricCPU, alerting.MetricMemory, alerting.MetricDisk, alerting.MetricSwap:
 		return unitPercent
 	case alerting.MetricNetIn, alerting.MetricNetOut:
 		return unitRate
+	case alerting.MetricLoad1:
+		// A load average counts runnable tasks; "0.52" needs no unit.
+		return unitNone
 	default:
-		return ""
+		return unitNone
 	}
 }

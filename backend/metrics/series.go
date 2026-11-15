@@ -110,12 +110,12 @@ func (s *Store) accumulateRaw(serverID int64, now time.Time, g grid, accs []step
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for i := st.raw.size() - 1; i >= 0; i-- {
-		p := st.raw.at(i)
+		p, x := st.raw.at(i)
 		if p.t < lo {
 			break
 		}
 		if idx, ok := g.index(p.t); ok {
-			accs[idx].addPoint(p)
+			accs[idx].addPoint(p, x)
 		}
 	}
 }
@@ -129,7 +129,7 @@ func (s *Store) accumulateMinutes(ctx context.Context, serverID int64, r Range, 
 		st.mu.Unlock()
 	}
 
-	var hist map[mins]cbucket
+	var hist map[mins]fbucket
 	if s.history != nil && g.first < memFrom.nanos() {
 		from, to := time.Unix(0, g.first).UTC(), memFrom.time()
 		bs, err := s.historyBuckets(ctx, cacheKey{server: serverID, r: r}, Minute, from, to, true)
@@ -142,7 +142,7 @@ func (s *Store) accumulateMinutes(ctx context.Context, serverID int64, r Range, 
 	if st != nil {
 		st.mu.Lock()
 		for i := st.recent.size() - 1; i >= 0; i-- {
-			b := st.recent.at(i)
+			b := bucketAt(&st.recent, i)
 			if b.start.nanos() < g.first {
 				break
 			}
@@ -160,7 +160,7 @@ func (s *Store) accumulateMinutes(ctx context.Context, serverID int64, r Range, 
 }
 
 func (s *Store) accumulateHours(ctx context.Context, serverID int64, r Range, g grid, accs []stepAcc) error {
-	var hist map[mins]cbucket
+	var hist map[mins]fbucket
 	if s.history != nil {
 		from, to := time.Unix(0, g.first).UTC(), time.Unix(0, g.end()).UTC()
 		// Hours closed after this fetch stay in memory until a flush, and a
@@ -175,7 +175,7 @@ func (s *Store) accumulateHours(ctx context.Context, serverID int64, r Range, g 
 	if st := s.lookup(serverID); st != nil {
 		st.mu.Lock()
 		for i := st.hours.size() - 1; i >= 0; i-- {
-			b := st.hours.at(i)
+			b := bucketAt(&st.hours, i)
 			if b.start.nanos() < g.first {
 				break
 			}
@@ -196,8 +196,8 @@ func (s *Store) accumulateHours(ctx context.Context, serverID int64, r Range, g 
 	return nil
 }
 
-func indexBuckets(bs []cbucket, from, to int64) map[mins]cbucket {
-	out := make(map[mins]cbucket, len(bs))
+func indexBuckets(bs []fbucket, from, to int64) map[mins]fbucket {
+	out := make(map[mins]fbucket, len(bs))
 	for _, b := range bs {
 		if n := b.start.nanos(); n >= from && n < to {
 			out[b.start] = fuller(out[b.start], b)
@@ -208,7 +208,7 @@ func indexBuckets(bs []cbucket, from, to int64) map[mins]cbucket {
 
 // addMerged adds a memory bucket, resolving a collision with the History
 // copy of the same period. The History entry is consumed either way.
-func addMerged(accs []stepAcc, g grid, b cbucket, hist map[mins]cbucket) {
+func addMerged(accs []stepAcc, g grid, b fbucket, hist map[mins]fbucket) {
 	if h, ok := hist[b.start]; ok {
 		delete(hist, b.start)
 		b = fuller(b, h)
@@ -216,14 +216,14 @@ func addMerged(accs []stepAcc, g grid, b cbucket, hist map[mins]cbucket) {
 	addBucket(accs, g, b)
 }
 
-func addBucket(accs []stepAcc, g grid, b cbucket) {
+func addBucket(accs []stepAcc, g grid, b fbucket) {
 	if idx, ok := g.index(b.start.nanos()); ok {
 		accs[idx].addBucket(b)
 	}
 }
 
 func buildSeries(r Range, spec rangeSpec, g grid, accs []stepAcc) Series {
-	const fields = 5
+	const fields = 9
 	points := make([]SeriesPoint, g.n)
 	vals := make([]float32, fields*g.n) // one allocation backs every non-nil field
 	for i := range points {
@@ -240,6 +240,15 @@ func buildSeries(r Range, spec rangeSpec, g grid, accs []stepAcc) Series {
 		v[4] = float32(a.out / a.w)
 		points[i].CPU, points[i].Mem, points[i].Disk = &v[0], &v[1], &v[2]
 		points[i].NetInBps, points[i].NetOutBps = &v[3], &v[4]
+		if a.xw == 0 {
+			continue // only older agents reported in this step: null, not 0
+		}
+		v[5] = float32(a.load1 / a.xw)
+		v[6] = float32(a.swap / a.xw)
+		v[7] = float32(a.read / a.xw)
+		v[8] = float32(a.write / a.xw)
+		points[i].Load1, points[i].Swap = &v[5], &v[6]
+		points[i].DiskReadBps, points[i].DiskWriteBps = &v[7], &v[8]
 	}
 	return Series{
 		Range:       r,
@@ -253,6 +262,11 @@ func buildSeries(r Range, spec rangeSpec, g grid, accs []stepAcc) Series {
 			SeriesDisk:   statOf(points, func(p SeriesPoint) *float32 { return p.Disk }),
 			SeriesNetIn:  statOf(points, func(p SeriesPoint) *float32 { return p.NetInBps }),
 			SeriesNetOut: statOf(points, func(p SeriesPoint) *float32 { return p.NetOutBps }),
+
+			SeriesLoad1:     statOf(points, func(p SeriesPoint) *float32 { return p.Load1 }),
+			SeriesSwap:      statOf(points, func(p SeriesPoint) *float32 { return p.Swap }),
+			SeriesDiskRead:  statOf(points, func(p SeriesPoint) *float32 { return p.DiskReadBps }),
+			SeriesDiskWrite: statOf(points, func(p SeriesPoint) *float32 { return p.DiskWriteBps }),
 		},
 	}
 }
@@ -302,10 +316,10 @@ func (s *Store) Sparkline(serverID int64, n int) (cpu, mem, disk []float32) {
 	st.mu.Lock()
 	picked := make([]cbucket, 0, n)
 	if st.minute.open && st.minute.start >= lo && st.minute.start <= hi {
-		picked = append(picked, st.minute.bucket())
+		picked = append(picked, st.minute.bucket().cbucket)
 	}
 	for i := st.recent.size() - 1; i >= 0 && len(picked) < n; i-- {
-		b := st.recent.at(i)
+		b, _ := st.recent.at(i)
 		if b.start < lo {
 			break
 		}
@@ -335,7 +349,7 @@ type cacheKey struct {
 
 type cacheEntry struct {
 	from, to time.Time
-	buckets  []cbucket
+	buckets  []fbucket
 }
 
 // historyCache holds History results per (server, range) until the next
@@ -347,7 +361,7 @@ type historyCache struct {
 	entries map[cacheKey]cacheEntry
 }
 
-func (c *historyCache) get(k cacheKey, from, to time.Time, needTo bool) ([]cbucket, uint64, bool) {
+func (c *historyCache) get(k cacheKey, from, to time.Time, needTo bool) ([]fbucket, uint64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[k]
@@ -386,7 +400,7 @@ func (c *historyCache) forget(serverID int64) {
 // historyBuckets reads persisted buckets in [from, to), served from the cache
 // when a previous read covers the range. needTo requires the cached copy to
 // reach `to` (minute backfill); hour ranges extend from memory instead.
-func (s *Store) historyBuckets(ctx context.Context, k cacheKey, res Resolution, from, to time.Time, needTo bool) ([]cbucket, error) {
+func (s *Store) historyBuckets(ctx context.Context, k cacheKey, res Resolution, from, to time.Time, needTo bool) ([]fbucket, error) {
 	cached, gen, ok := s.cache.get(k, from, to, needTo)
 	if ok {
 		return cached, nil
@@ -395,7 +409,7 @@ func (s *Store) historyBuckets(ctx context.Context, k cacheKey, res Resolution, 
 	if err != nil {
 		return nil, fmt.Errorf("metrics: read %s history for server %d: %w", k.r, k.server, err)
 	}
-	bs := make([]cbucket, 0, len(raw))
+	bs := make([]fbucket, 0, len(raw))
 	for _, b := range raw {
 		if b.Start.Before(from) || !b.Start.Before(to) {
 			continue

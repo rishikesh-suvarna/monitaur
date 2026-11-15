@@ -1,7 +1,8 @@
 /**
  * Shapes GET /servers/:id/series for the detail charts: rows for Recharts,
- * gaps (null points are breaks, never interpolated), the network unit, axis
- * scales, tick labels and the stat chips.
+ * gaps (null points are breaks, never interpolated), the network and disk I/O
+ * units, axis scales, tick labels, the stat chips and which charts the agent
+ * does not report (section 6.1 host metrics are null for older agents).
  */
 import type {
   SeriesField,
@@ -17,7 +18,10 @@ import { EMPTY_VALUE, formatBytes, formatCompact, toTime } from '../../lib/forma
 import { formatThreshold } from '../../lib/status';
 import { hasThreshold, thresholdLines } from '../../lib/thresholds';
 
-export const SERIES_FIELDS: readonly SeriesField[] = ['cpu', 'mem', 'disk', 'net_in', 'net_out'];
+export const SERIES_FIELDS: readonly SeriesField[] = ['cpu', 'mem', 'disk', 'net_in', 'net_out', 'load1', 'swap', 'disk_read', 'disk_write'];
+const NET_FIELDS = ['net_in', 'net_out'] as const;
+const DISK_IO_FIELDS = ['disk_read', 'disk_write'] as const;
+type RateField = (typeof NET_FIELDS)[number] | (typeof DISK_IO_FIELDS)[number];
 
 export const PERCENT_MAX = 100;
 const BYTES_PER_UNIT = 1024;
@@ -33,7 +37,7 @@ const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86_400;
 
-/** One chart row. Percent fields are 0 to 100; net fields are in the chosen rate unit. */
+/** One chart row. Percent fields are 0 to 100; net and disk I/O fields are in their chosen rate unit; load is as reported. */
 export interface ChartRow {
   ts: number;
   cpu: number | null;
@@ -41,6 +45,10 @@ export interface ChartRow {
   disk: number | null;
   net_in: number | null;
   net_out: number | null;
+  load1: number | null;
+  swap: number | null;
+  disk_read: number | null;
+  disk_write: number | null;
 }
 
 export interface RateUnit {
@@ -62,34 +70,55 @@ export function pickRateUnit(maxBytesPerSecond: number): RateUnit {
   return { label: RATE_UNITS[index] ?? 'B/s', divisor };
 }
 
-/** Busiest network value in the response (points, stats and the rate thresholds), in B/s. */
-export function maxRate(series: Pick<SeriesResponse, 'points' | 'stats'>): number {
+function maxOf(series: Pick<SeriesResponse, 'points' | 'stats'>, fields: readonly RateField[]): number {
   let max = 0;
   for (const point of series.points) {
-    if (finite(point.net_in)) max = Math.max(max, point.net_in);
-    if (finite(point.net_out)) max = Math.max(max, point.net_out);
+    for (const field of fields) {
+      const value: number | null | undefined = point[field];
+      if (finite(value)) max = Math.max(max, value);
+    }
   }
-  for (const field of ['net_in', 'net_out'] as const) {
+  for (const field of fields) {
     const stat = series.stats[field];
-    if (stat) max = Math.max(max, stat.max);
+    if (stat && finite(stat.max)) max = Math.max(max, stat.max);
   }
   return max;
 }
 
-const scale = (value: number | null, divisor: number): number | null => (finite(value) ? value / divisor : null);
+/** Busiest network value in the response (points and stats), in B/s. */
+export function maxRate(series: Pick<SeriesResponse, 'points' | 'stats'>): number {
+  return maxOf(series, NET_FIELDS);
+}
 
-export function toChartRows(points: readonly SeriesPoint[], rate: RateUnit): ChartRow[] {
+/** Busiest disk read or write rate in the response, in B/s. */
+export function maxDiskRate(series: Pick<SeriesResponse, 'points' | 'stats'>): number {
+  return maxOf(series, DISK_IO_FIELDS);
+}
+
+// The section 6.1 keys are typed as present, but a backend from before them omits them entirely,
+// so every field goes through these and undefined reads as null (unreported).
+const scale = (value: number | null | undefined, divisor: number): number | null => (finite(value) ? value / divisor : null);
+const keep = (value: number | null | undefined): number | null => (finite(value) ? value : null);
+
+/** Bytes per second as they are, for callers that do not chart disk I/O. */
+const BYTES_PER_SECOND: RateUnit = { label: 'B/s', divisor: 1 };
+
+export function toChartRows(points: readonly SeriesPoint[], rate: RateUnit, diskRate: RateUnit = BYTES_PER_SECOND): ChartRow[] {
   const rows: ChartRow[] = [];
   for (const point of points) {
     const ts = toTime(point.t);
     if (ts === null) continue;
     rows.push({
       ts,
-      cpu: finite(point.cpu) ? point.cpu : null,
-      mem: finite(point.mem) ? point.mem : null,
-      disk: finite(point.disk) ? point.disk : null,
+      cpu: keep(point.cpu),
+      mem: keep(point.mem),
+      disk: keep(point.disk),
       net_in: scale(point.net_in, rate.divisor),
       net_out: scale(point.net_out, rate.divisor),
+      load1: keep(point.load1),
+      swap: keep(point.swap),
+      disk_read: scale(point.disk_read, diskRate.divisor),
+      disk_write: scale(point.disk_write, diskRate.divisor),
     });
   }
   return rows;
@@ -138,7 +167,7 @@ export function findGaps(rows: readonly ChartRow[], rangeEnd: number): GapReport
   };
 }
 
-/** Fields the agent never reported in this range, while others did (e.g. an old agent without network). */
+/** Fields the agent never reported in this range, while others did (e.g. an old agent without network or load). */
 export function unreportedFields(rows: readonly ChartRow[]): SeriesField[] {
   if (!rows.some(hasData)) return [];
   return SERIES_FIELDS.filter((field) => rows.every((row) => row[field] === null));
@@ -153,15 +182,26 @@ export function niceCeil(value: number): number {
   return step * magnitude;
 }
 
-/** Top of a rate chart's y axis, in display units, keeping thresholds on screen. */
-export function rateAxisMax(rows: readonly ChartRow[], thresholdsInUnit: readonly number[]): number {
+function rowsMax(rows: readonly ChartRow[], fields: readonly SeriesField[], floor: readonly number[]): number {
   let max = 0;
   for (const row of rows) {
-    if (row.net_in !== null) max = Math.max(max, row.net_in);
-    if (row.net_out !== null) max = Math.max(max, row.net_out);
+    for (const field of fields) {
+      const value = row[field];
+      if (value !== null) max = Math.max(max, value);
+    }
   }
-  for (const value of thresholdsInUnit) max = Math.max(max, value);
-  return niceCeil(max * RATE_HEADROOM);
+  for (const value of floor) max = Math.max(max, value);
+  return max;
+}
+
+/** Top of a rate chart's y axis, in display units, keeping thresholds on screen. */
+export function rateAxisMax(rows: readonly ChartRow[], thresholdsInUnit: readonly number[], fields: readonly RateField[] = NET_FIELDS): number {
+  return niceCeil(rowsMax(rows, fields, thresholdsInUnit) * RATE_HEADROOM);
+}
+
+/** Top of the load chart's y axis: the busiest load, the core count and the load thresholds all stay on screen. */
+export function loadAxisMax(rows: readonly ChartRow[], cores: number, thresholds: readonly number[]): number {
+  return niceCeil(rowsMax(rows, ['load1'], [...thresholds, Math.max(0, cores)]) * RATE_HEADROOM);
 }
 
 /** `count` evenly spaced timestamps from `from` to `to`, both ends included. */
@@ -246,13 +286,23 @@ export function formatGap(gap: TimeSpan, range: SeriesRange): string {
   return `${format.format(gap.from)}–${format.format(gap.to)}`;
 }
 
-export type ValueKind = 'percent' | 'rate';
+/** percent: 0 to 100; rate: bytes/s shown in a rate unit; number: unitless (load average). */
+export type ValueKind = 'percent' | 'rate' | 'number';
 
-/** A chart value without its unit: "41.6" for percent, "38.2" in the rate unit. */
+/** Load averages read best with two decimals, as uptime and top print them. */
+const LOAD_DECIMALS = 2;
+
+/** A chart value without its unit: "41.6" for percent, "38.2" in the rate unit, "0.52" for load. */
 export function formatValue(value: number | null | undefined, kind: ValueKind, rate?: RateUnit): string {
   if (!finite(value)) return EMPTY_VALUE;
   if (kind === 'percent') return value.toFixed(1);
+  if (kind === 'number') return value.toFixed(LOAD_DECIMALS);
   return formatCompact(value / (rate?.divisor ?? 1));
+}
+
+/** A load threshold or core count without needless decimals: 4, 4.5, 0.75. */
+export function formatLoadLimit(value: number): string {
+  return String(Number(value.toFixed(LOAD_DECIMALS)));
 }
 
 export interface StatChips {
@@ -284,7 +334,7 @@ export function latestRowIndex(rows: readonly ChartRow[]): number | null {
 
 // ---------------------------------------------------------------- chart specs
 
-export type ChartKey = 'cpu' | 'mem' | 'disk' | 'net';
+export type ChartKey = 'cpu' | 'load' | 'mem' | 'swap' | 'disk' | 'disk_io' | 'net';
 export type SeriesTone = 'in' | 'out';
 
 export interface ChartSeriesSpec {
@@ -304,16 +354,24 @@ export interface ChartThreshold {
   field: SeriesField;
 }
 
+/** A neutral reference line that is not a rule, e.g. the core count on the load chart. */
+export interface ChartReference {
+  value: number;
+  /** "8 cores" */
+  label: string;
+}
+
 export interface ChartSpec {
   key: ChartKey;
   title: string;
-  /** Muted hint beside the title: "% of 8 cores", "MB/s". */
+  /** Muted hint beside the title: "% of 8 cores", "MB/s", "1 min average". */
   unitHint: string;
   kind: ValueKind;
   /** Top of the y axis in display units. */
   max: number;
   series: ChartSeriesSpec[];
   thresholds: ChartThreshold[];
+  references: ChartReference[];
 }
 
 const AREA_OPACITY = 0.16;
@@ -323,8 +381,10 @@ const SEVERITY_SHORT: Record<Severity, string> = { warning: 'warn', critical: 'c
 export interface ChartSpecInput {
   rows: readonly ChartRow[];
   rate: RateUnit;
+  /** Disk I/O unit; bytes per second when left out. */
+  diskRate?: RateUnit;
   thresholds: Partial<Record<string, ThresholdPair>>;
-  latest: Pick<ServerLatest, 'cpu_cores' | 'mem_total' | 'disk_total'> | null;
+  latest: (Pick<ServerLatest, 'cpu_cores' | 'mem_total' | 'disk_total'> & Partial<Pick<ServerLatest, 'swap_total'>>) | null;
 }
 
 function percentThresholds(field: SeriesField, pair: ThresholdPair | undefined): ChartThreshold[] {
@@ -336,6 +396,17 @@ function percentThresholds(field: SeriesField, pair: ThresholdPair | undefined):
   }));
 }
 
+function loadThresholds(pair: ThresholdPair | undefined): ChartThreshold[] {
+  return thresholdLines(pair).map((line) => ({
+    severity: line.severity,
+    value: line.value,
+    label: `${SEVERITY_SHORT[line.severity]} ${formatLoadLimit(line.value)}`,
+    field: 'load1',
+  }));
+}
+
+const coresLabel = (cores: number): string => `${formatLoadLimit(cores)} ${cores === 1 ? 'core' : 'cores'}`;
+
 function rateThresholds(field: 'net_in' | 'net_out', pair: ThresholdPair | undefined, rate: RateUnit, prefix: boolean): ChartThreshold[] {
   const direction = field === 'net_in' ? 'in' : 'out';
   return thresholdLines(pair).map((line) => ({
@@ -346,23 +417,40 @@ function rateThresholds(field: 'net_in' | 'net_out', pair: ThresholdPair | undef
   }));
 }
 
-/** The four charts of ServerDetail.dc.html: CPU, Memory, Disk / and Network (in and out). */
-export function buildChartSpecs({ rows, rate, thresholds, latest }: ChartSpecInput): ChartSpec[] {
+/**
+ * The charts of ServerDetail.dc.html (CPU, Memory, Disk /, Network) plus the
+ * section 6.1 host metrics, each beside the one it explains: Load after CPU,
+ * Swap after Memory, Disk I/O after Disk /, so small multiples pair them.
+ */
+export function buildChartSpecs({ rows, rate, diskRate = BYTES_PER_SECOND, thresholds, latest }: ChartSpecInput): ChartSpec[] {
   const cores = latest?.cpu_cores ?? 0;
-  const of = (total: number | undefined): string => (total !== undefined && total > 0 ? `% of ${formatBytes(total)}` : '%');
+  const of = (total: number | null | undefined): string => (typeof total === 'number' && total > 0 ? `% of ${formatBytes(total)}` : '%');
   const netIn = thresholds.net_in;
   const netOut = thresholds.net_out;
   const bothRates = hasThreshold(netIn) && hasThreshold(netOut);
   const networkThresholds = [...rateThresholds('net_in', netIn, rate, bothRates), ...rateThresholds('net_out', netOut, rate, bothRates)];
+  const load = loadThresholds(thresholds.load1);
   return [
     {
       key: 'cpu',
       title: 'CPU',
-      unitHint: cores > 0 ? `% of ${cores} ${cores === 1 ? 'core' : 'cores'}` : '%',
+      unitHint: cores > 0 ? `% of ${coresLabel(cores)}` : '%',
       kind: 'percent',
       max: PERCENT_MAX,
       series: [{ field: 'cpu', label: 'CPU', tone: 'in', fillOpacity: AREA_OPACITY }],
       thresholds: percentThresholds('cpu', thresholds.cpu),
+      references: [],
+    },
+    {
+      key: 'load',
+      title: 'Load',
+      unitHint: '1 min average',
+      kind: 'number',
+      max: loadAxisMax(rows, cores, load.map((line) => line.value)),
+      series: [{ field: 'load1', label: 'Load', tone: 'in', fillOpacity: AREA_OPACITY }],
+      thresholds: load,
+      // Load at the core count means every core is busy; above it, work is queueing.
+      references: cores > 0 ? [{ value: cores, label: coresLabel(cores) }] : [],
     },
     {
       key: 'mem',
@@ -372,6 +460,17 @@ export function buildChartSpecs({ rows, rate, thresholds, latest }: ChartSpecInp
       max: PERCENT_MAX,
       series: [{ field: 'mem', label: 'Mem', tone: 'in', fillOpacity: AREA_OPACITY }],
       thresholds: percentThresholds('mem', thresholds.mem),
+      references: [],
+    },
+    {
+      key: 'swap',
+      title: 'Swap',
+      unitHint: of(latest?.swap_total),
+      kind: 'percent',
+      max: PERCENT_MAX,
+      series: [{ field: 'swap', label: 'Swap', tone: 'in', fillOpacity: AREA_OPACITY }],
+      thresholds: percentThresholds('swap', thresholds.swap),
+      references: [],
     },
     {
       key: 'disk',
@@ -381,6 +480,20 @@ export function buildChartSpecs({ rows, rate, thresholds, latest }: ChartSpecInp
       max: PERCENT_MAX,
       series: [{ field: 'disk', label: 'Disk', tone: 'in', fillOpacity: AREA_OPACITY }],
       thresholds: percentThresholds('disk', thresholds.disk),
+      references: [],
+    },
+    {
+      key: 'disk_io',
+      title: 'Disk I/O',
+      unitHint: diskRate.label,
+      kind: 'rate',
+      max: rateAxisMax(rows, [], DISK_IO_FIELDS),
+      series: [
+        { field: 'disk_read', label: 'Read', tone: 'in', fillOpacity: AREA_OPACITY },
+        { field: 'disk_write', label: 'Write', tone: 'out', fillOpacity: SECONDARY_AREA_OPACITY },
+      ],
+      thresholds: [],
+      references: [],
     },
     {
       key: 'net',
@@ -393,8 +506,56 @@ export function buildChartSpecs({ rows, rate, thresholds, latest }: ChartSpecInp
         { field: 'net_out', label: 'Out', tone: 'out', fillOpacity: SECONDARY_AREA_OPACITY },
       ],
       thresholds: networkThresholds,
+      references: [],
     },
   ];
+}
+
+// ---------------------------------------------------------------- hide rule
+
+/** A chart the agent does not report at all: every one of its series is null over the whole range. */
+export function isUnreportedSpec(spec: Pick<ChartSpec, 'series'>, unreported: readonly SeriesField[]): boolean {
+  return spec.series.every((series) => unreported.includes(series.field));
+}
+
+export interface SpecPartition {
+  /** Charts to draw, in order. */
+  shown: ChartSpec[];
+  /** Charts folded into one "Not reported by agent vX" note. */
+  hidden: ChartSpec[];
+}
+
+/**
+ * Splits the charts into the ones to draw and the ones the agent never sent.
+ * `unreported` is empty for a range without any data, so nothing is hidden
+ * then (the empty state covers it).
+ */
+export function partitionSpecs(specs: readonly ChartSpec[], unreported: readonly SeriesField[]): SpecPartition {
+  const shown: ChartSpec[] = [];
+  const hidden: ChartSpec[] = [];
+  for (const spec of specs) (isUnreportedSpec(spec, unreported) ? hidden : shown).push(spec);
+  return { shown, hidden };
+}
+
+/** The unit after a value in the readout: "%", " MB/s", or nothing for load. */
+export function valueSuffix(spec: Pick<ChartSpec, 'kind' | 'unitHint'>): string {
+  if (spec.kind === 'percent') return '%';
+  if (spec.kind === 'rate') return ` ${spec.unitHint}`;
+  return '';
+}
+
+/** The 390 px chart header hint: "%", "MB/s in / out", "KB/s read / write", "1 min average". */
+export function compactUnitHint(spec: Pick<ChartSpec, 'kind' | 'unitHint' | 'series'>): string {
+  if (spec.kind === 'percent') return '%';
+  if (spec.kind === 'rate') return `${spec.unitHint} ${spec.series.map((series) => series.label.toLowerCase()).join(' / ')}`;
+  return spec.unitHint;
+}
+
+/** "5 min 0.40 · 15 min 0.31" (short: "5m 0.40 · 15m 0.31"); null unless the agent sent both. */
+export function loadAverages(latest: Pick<ServerLatest, 'load5' | 'load15'> | null | undefined, short = false): string | null {
+  if (!latest || !finite(latest.load5) || !finite(latest.load15)) return null;
+  const unit = short ? 'm' : ' min';
+  return `5${unit} ${formatValue(latest.load5, 'number')} · 15${unit} ${formatValue(latest.load15, 'number')}`;
 }
 
 export type LabelPlacement = 'above' | 'below';

@@ -20,7 +20,8 @@ const (
 	safeIdleConnTimeout       = 90 * time.Second
 	safeMaxIdleConns          = 32
 	safeMaxIdleConnsPerHost   = 4
-	maxRedirects              = 3
+	// MaxRedirects is how many redirects a guarded client follows.
+	MaxRedirects = 3
 )
 
 // errBlockedAddress is returned (wrapped) when a destination resolves to an
@@ -85,17 +86,35 @@ func blockPrivateControl(network, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-// SafeHTTPClient refuses loopback, private, link-local and unspecified addresses unless allowPrivate (self-hosted).
-func SafeHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
-	dialer := &net.Dialer{Timeout: safeDialTimeout, KeepAlive: safeKeepAlive}
+// IsBlockedIP reports whether addr is in a range tenants must not reach
+// (loopback, private, link-local, unspecified, multicast and friends). The
+// API uses it to reject literal targets up front; the dial-time guard below
+// remains the real enforcement.
+func IsBlockedIP(addr netip.Addr) bool { return isBlockedIP(addr) }
+
+// IsBlockedAddress reports whether err came from the private-address guard.
+func IsBlockedAddress(err error) bool { return errors.Is(err, errBlockedAddress) }
+
+// SafeDialer returns a dialer whose Control hook refuses blocked addresses
+// (after DNS resolution, so rebinding cannot bypass it) unless allowPrivate.
+// Uptime checks dial their TCP and TLS targets through it.
+func SafeDialer(timeout time.Duration, allowPrivate bool) *net.Dialer {
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: safeKeepAlive}
 	if !allowPrivate {
 		dialer.Control = blockPrivateControl
 	}
-	transport := &http.Transport{
+	return dialer
+}
+
+// SafeTransport returns a new transport that dials through SafeDialer. Each
+// call returns a fresh value, so callers may adjust it (TLS roots, keep-alive)
+// without affecting other clients.
+func SafeTransport(allowPrivate bool) *http.Transport {
+	return &http.Transport{
 		// No proxy, deliberately: with a proxy the dialer only ever sees the
 		// proxy's address, so the private-range check would be bypassed.
 		Proxy:                 nil,
-		DialContext:           dialer.DialContext,
+		DialContext:           SafeDialer(safeDialTimeout, allowPrivate).DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   safeTLSHandshakeTimeout,
 		ResponseHeaderTimeout: safeResponseHeaderTimeout,
@@ -105,14 +124,22 @@ func SafeHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
 		MaxIdleConnsPerHost:   safeMaxIdleConnsPerHost,
 		ForceAttemptHTTP2:     true,
 	}
+}
+
+// LimitRedirects is SafeHTTPClient's redirect policy: at most MaxRedirects
+// hops, each re-dialled through the guard.
+func LimitRedirects(_ *http.Request, via []*http.Request) error {
+	if len(via) > MaxRedirects {
+		return fmt.Errorf("stopped after %d redirects", MaxRedirects)
+	}
+	return nil
+}
+
+// SafeHTTPClient refuses loopback, private, link-local and unspecified addresses unless allowPrivate (self-hosted).
+func SafeHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
 	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-			if len(via) > maxRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxRedirects)
-			}
-			return nil
-		},
+		Timeout:       timeout,
+		Transport:     SafeTransport(allowPrivate),
+		CheckRedirect: LimitRedirects,
 	}
 }

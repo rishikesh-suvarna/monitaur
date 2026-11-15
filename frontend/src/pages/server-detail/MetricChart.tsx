@@ -42,6 +42,9 @@ const AXIS_FONT_SIZE = 11;
 const COMPACT_FONT_SIZE = 10;
 const MUTED_INK = 'rgb(var(--tx3))';
 const LABEL_INK = 'rgb(var(--tx2))';
+// Reference lines (the core count) are context, not rules: neutral ink and a dotted dash, never a status colour.
+const REFERENCE_COLOR = MUTED_INK;
+const REFERENCE_DASH = '2 3';
 
 const Y_AXIS_WIDTH = 36;
 const X_AXIS_HEIGHT = 20;
@@ -177,6 +180,28 @@ export const MetricChart = memo(function MetricChart({
       );
     };
 
+  // Opposite the threshold labels (left on desktop, right at 390 px) so the two never collide.
+  const referenceLabel =
+    (text: string) =>
+    ({ viewBox }: LabelRenderProps) => {
+      const x = viewBox?.x ?? 0;
+      const y = viewBox?.y ?? 0;
+      const width = viewBox?.width ?? 0;
+      return (
+        <text
+          x={compact ? x + width - LABEL_OFFSET : x + LABEL_OFFSET}
+          y={y - LABEL_OFFSET}
+          textAnchor={compact ? 'end' : 'start'}
+          fill={LABEL_INK}
+          fontSize={fontSize}
+          fontFamily={MONO}
+          {...LABEL_HALO}
+        >
+          {text}
+        </text>
+      );
+    };
+
   const gapLabel = ({ viewBox }: LabelRenderProps) => (
     <text
       x={(viewBox?.x ?? 0) + (viewBox?.width ?? 0) / 2}
@@ -293,6 +318,17 @@ export const MetricChart = memo(function MetricChart({
               />
             );
           })}
+          {spec.references.map((line) => (
+            <ReferenceLine
+              key={`reference-${line.value}`}
+              y={line.value}
+              stroke={REFERENCE_COLOR}
+              strokeWidth={1}
+              strokeDasharray={REFERENCE_DASH}
+              ifOverflow="hidden"
+              label={referenceLabel(line.label)}
+            />
+          ))}
           {spec.thresholds.map((line, index) => (
             <ReferenceLine
               key={`${line.field}-${line.severity}`}

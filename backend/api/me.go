@@ -84,10 +84,12 @@ func (a *API) deleteMe(c *gin.Context) {
 	for _, d := range deleted {
 		for _, sid := range a.Dir.RemoveOrg(d.OrgID) {
 			a.Metrics.Forget(sid)
+			a.Processes.Forget(sid)
 			a.Engine.RemoveServer(ctx, sid)
 			a.Hub.Disconnect(sid)
 		}
 		a.Engine.SetOrgRules(d.OrgID, nil)
+		a.Checks.RemoveOrg(d.OrgID)
 		a.Auth.InvalidateOrg(d.OrgID)
 	}
 	a.Dir.ForgetUser(id.User.ID)

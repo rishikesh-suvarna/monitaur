@@ -1,4 +1,4 @@
-import type { IncidentFilters, SeriesRange } from './types';
+import type { CheckResultsRange, IncidentFilters, SeriesRange } from './types';
 
 /**
  * Query keys. Everything org-scoped starts with ['org', orgId] so a cache entry
@@ -18,9 +18,17 @@ export const queryKeys = {
   serverSeriesAll: (orgId: number, serverId: number) => ['org', orgId, 'servers', 'series', serverId] as const,
   serverSeries: (orgId: number, serverId: number, range: SeriesRange) =>
     ['org', orgId, 'servers', 'series', serverId, range] as const,
+  serverProcesses: (orgId: number, serverId: number) => ['org', orgId, 'servers', 'processes', serverId] as const,
 
   incidentsAll: (orgId: number) => ['org', orgId, 'incidents'] as const,
   incidents: (orgId: number, filters: IncidentFilters) => ['org', orgId, 'incidents', filters] as const,
+
+  checksList: (orgId: number) => ['org', orgId, 'checks', 'list'] as const,
+  checkResultsAll: (orgId: number, checkId: number) => ['org', orgId, 'checks', 'results', checkId] as const,
+  checkResults: (orgId: number, checkId: number, range: CheckResultsRange) =>
+    ['org', orgId, 'checks', 'results', checkId, range] as const,
+
+  maintenance: (orgId: number) => ['org', orgId, 'maintenance'] as const,
 
   rules: (orgId: number) => ['org', orgId, 'rules'] as const,
   channels: (orgId: number) => ['org', orgId, 'channels'] as const,

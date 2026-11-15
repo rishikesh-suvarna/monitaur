@@ -45,7 +45,7 @@ src/
   pages/                 one folder per screen (see Screens), plus 404 and invite acceptance
 ```
 
-Page folders keep their pure logic in a `*Model.ts` beside the components (`rules/ruleModel.ts`, `channels/channelModel.ts`, `settings/settingsModel.ts`, `status/statusModel.ts`), unit tested next to it.
+Page folders keep their pure logic in a `*Model.ts` beside the components (`rules/ruleModel.ts`, `channels/channelModel.ts`, `checks/checkModel.ts`, `alerts/maintenanceModel.ts`, `settings/settingsModel.ts`, `status/statusModel.ts`), unit tested next to it.
 
 Import shared pieces from the barrels: `src/components/index.ts`, `src/hooks/index.ts`, `src/api/index.ts`.
 
@@ -54,7 +54,7 @@ Import shared pieces from the barrels: `src/components/index.ts`, `src/hooks/ind
 - Tokens: use the Tailwind theme (`bg-surface-1`, `border-line`, `text-ink-muted`, `text-crit`, `bg-tint-warn`, `text-h2`, `rounded-lg`, `shadow-float`). Never hard-code colours. Numbers go in `.num` (Geist Mono, tabular figures).
 - Status is colour + shape + word: use `StatusBadge` / `StatusIcon` and `presentIncident()`. Data series use `series` colours; warn/crit only for threshold breaches.
 - Data: org-scoped hooks read the org from `useOrgId()`; keys come from `queryKeys` and always start with `['org', orgId]`. Mutations invalidate targeted keys (v5 object syntax).
-- Live data: `LiveStreamProvider` runs one fetch-based SSE connection and patches the servers and incidents caches; read its state with `useLiveStatus()`. Do not open a second stream.
+- Live data: `LiveStreamProvider` runs one fetch-based SSE connection and patches the servers, checks and incidents caches; read its state with `useLiveStatus()`. Do not open a second stream.
 - Errors are `ApiError` with `code` and `status`. A 401 retries once with a forced token refresh, then signs out; the app never reloads itself.
 - Role-restricted actions stay visible but disabled (`useOrg().can('member')`) with a `title` explaining why.
 - Motion respects `prefers-reduced-motion` and the user override (`useMotion()`); JS animations check `useReducedMotion()`.
@@ -68,9 +68,10 @@ Import shared pieces from the barrels: `src/components/index.ts`, `src/hooks/ind
 | `/` | `pages/overview/` | Main, OverviewLight, OverviewMobile, States |
 | `/servers/:id` | `pages/server-detail/` | ServerDetail, ServerDetailLight, ServerDetailMobile |
 | `/servers/:id/settings` | `pages/server-settings/` | ServerSettings, ServerSettingsMobile |
-| `/alerts` | `pages/alerts/` | Alerts, AlertsMobile |
+| `/checks`, `/checks/:id` | `pages/checks/` | none: Main table language, StatusBadge shapes with check words (up, down, degraded, paused, pending), States |
+| `/alerts` | `pages/alerts/` | Alerts, AlertsMobile; `?view=maintenance` lists maintenance windows (no artboard) |
 | `/rules` | `pages/rules/` | Rules, RulesMobile |
-| `/channels` | `pages/channels/` | Channels, ChannelsMobile |
+| `/channels` | `pages/channels/` | Channels, ChannelsMobile (on mobile it is linked from Settings; the tab bar keeps five tabs) |
 | `/settings` | `pages/settings/` | Settings, SettingsMobile (plus organization, plan and status page sections) |
 | `/status/:slug` | `pages/status/` | StatusPage (public, no shell) |
 | `/invite/:token` | `pages/InviteAcceptPage.tsx` | |

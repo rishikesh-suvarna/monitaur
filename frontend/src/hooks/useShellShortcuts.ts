@@ -6,6 +6,7 @@ export const SEQUENCE_WINDOW_MS = 1000;
 /** "G then <key>" navigation (shown in the command palette). */
 export const GO_TO_ROUTES: Readonly<Record<string, string>> = {
   o: '/',
+  u: '/checks',
   a: '/alerts',
   r: '/rules',
   c: '/channels',
@@ -24,7 +25,7 @@ export interface ShellShortcutHandlers {
 }
 
 /**
- * Cmd/Ctrl+K toggles the palette; "G" then O/A/R/C/S navigates. Owned by
+ * Cmd/Ctrl+K toggles the palette; "G" then O/U/A/R/C/S navigates. Owned by
  * <AppShell>: the listener is added when the shell mounts and removed when it
  * unmounts, so sign-in, onboarding and the public status page never see it.
  */

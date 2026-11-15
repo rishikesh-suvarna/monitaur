@@ -45,7 +45,7 @@ func (a *API) getOrg(c *gin.Context) {
 		"plan": a.Dir.Plan(p.OrgID),
 		"usage": gin.H{
 			"servers": usage.Servers, "members": usage.Members, "rules": usage.Rules, "channels": usage.Channels,
-			"alert_emails_today": a.Budget.SentToday(p.OrgID, a.Now()),
+			"checks": a.Dir.CheckCount(p.OrgID), "alert_emails_today": a.Budget.SentToday(p.OrgID, a.Now()),
 		},
 	})
 }
@@ -55,10 +55,14 @@ func orgJSON(o store.Org, role store.Role) gin.H {
 	if sp.ServerIDs == nil {
 		sp.ServerIDs = []int64{}
 	}
+	if sp.CheckIDs == nil {
+		sp.CheckIDs = []int64{}
+	}
 	return gin.H{
 		"id": o.ID, "name": o.Name, "slug": o.Slug, "plan_id": o.PlanID, "personal": o.Personal(), "role": role,
-		"status_page": gin.H{"enabled": sp.Enabled, "slug": o.Slug, "title": sp.Title, "server_ids": sp.ServerIDs},
-		"created_at":  o.CreatedAt,
+		"status_page": gin.H{"enabled": sp.Enabled, "slug": o.Slug, "title": sp.Title, "server_ids": sp.ServerIDs,
+			"check_ids": sp.CheckIDs},
+		"created_at": o.CreatedAt,
 	}
 }
 

@@ -7,18 +7,21 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
 	"backend/limits"
 	"backend/metrics"
+	"backend/processes"
 	"backend/secrets"
 	"backend/store"
 )
@@ -40,8 +43,18 @@ const (
 	maxServerNameLen   = 64
 
 	msgMetrics      = "metrics"
-	msgAlert        = "alert" // sent by v1 agents; v2 evaluates rules server-side
+	msgProcesses    = "processes" // F9 agents, every max(30 s, interval)
+	msgAlert        = "alert"     // sent by v1 agents; v2 evaluates rules server-side
 	msgConfigUpdate = "config_update"
+
+	// String caps for agent-reported names (F6 mounts and interfaces, F9
+	// processes). Longer values are cut, not rejected: a long mount path
+	// must not cost the host its metrics.
+	maxMountPathLen   = 256
+	maxFSTypeLen      = 32
+	maxIfaceNameLen   = 64
+	maxProcessNameLen = 64
+	maxProcessUserLen = 64
 )
 
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,32}$`)
@@ -55,6 +68,7 @@ type Directory interface {
 // Recorder receives everything an agent reports.
 type Recorder interface {
 	Sample(serverID int64, s metrics.Sample, minInterval time.Duration) error
+	Processes(serverID int64, snap processes.Snapshot)
 	Connected(serverID int64, version string, at time.Time)
 	Disconnected(serverID int64, at time.Time)
 }
@@ -277,6 +291,135 @@ type metricData struct {
 		BytesRecv uint64 `json:"bytes_recv"`
 	} `json:"network"`
 	Uptime int64 `json:"uptime"`
+
+	// F6 additions (docs/platform-v2.md 6.1); nil or absent from older agents.
+	Load *struct {
+		Load1  float64 `json:"load1"`
+		Load5  float64 `json:"load5"`
+		Load15 float64 `json:"load15"`
+	} `json:"load"`
+	Swap *struct {
+		Total       uint64  `json:"total"`
+		Used        uint64  `json:"used"`
+		UsedPercent float64 `json:"used_percent"`
+	} `json:"swap"`
+	DiskIO *struct {
+		ReadBytes  uint64 `json:"read_bytes"`
+		WriteBytes uint64 `json:"write_bytes"`
+	} `json:"disk_io"`
+	Mounts []struct {
+		Path        string  `json:"path"`
+		FSType      string  `json:"fstype"`
+		Total       uint64  `json:"total"`
+		Used        uint64  `json:"used"`
+		UsedPercent float64 `json:"used_percent"`
+	} `json:"mounts"`
+	Interfaces []struct {
+		Name      string `json:"name"`
+		BytesSent uint64 `json:"bytes_sent"`
+		BytesRecv uint64 `json:"bytes_recv"`
+	} `json:"interfaces"`
+}
+
+// sample turns the payload into a metrics.Sample stamped with server time
+// (buckets stay aligned even when a host's clock drifts). Lists are cut to
+// their bounds and strings to their caps.
+func (md *metricData) sample(now time.Time) metrics.Sample {
+	s := metrics.Sample{
+		Time:           now,
+		CPUPercent:     md.CPU.Usage,
+		CPUCores:       md.CPU.Cores,
+		MemTotalBytes:  md.Memory.Total,
+		MemUsedBytes:   md.Memory.Used,
+		MemPercent:     md.Memory.UsedPercent,
+		DiskTotalBytes: md.Disk.Total,
+		DiskUsedBytes:  md.Disk.Used,
+		DiskPercent:    md.Disk.UsedPercent,
+		NetRxTotal:     md.Network.BytesRecv,
+		NetTxTotal:     md.Network.BytesSent,
+		UptimeSeconds:  md.Uptime,
+	}
+	// An agent that cannot read one of the three (for example disk IO on a
+	// platform gopsutil does not support) still reports the other two; the
+	// missing one reads as 0 because rollups share one ext_samples weight.
+	s.Extended = md.Load != nil || md.Swap != nil || md.DiskIO != nil
+	if md.Load != nil {
+		s.Load1, s.Load5, s.Load15 = md.Load.Load1, md.Load.Load5, md.Load.Load15
+	}
+	if md.Swap != nil {
+		s.SwapTotalBytes, s.SwapUsedBytes, s.SwapPercent = md.Swap.Total, md.Swap.Used, md.Swap.UsedPercent
+	}
+	if md.DiskIO != nil {
+		s.DiskReadTotal, s.DiskWriteTotal = md.DiskIO.ReadBytes, md.DiskIO.WriteBytes
+	}
+	if md.Mounts != nil {
+		s.Mounts = make([]metrics.Mount, 0, min(len(md.Mounts), metrics.MaxMounts))
+		for _, m := range md.Mounts[:min(len(md.Mounts), metrics.MaxMounts)] {
+			s.Mounts = append(s.Mounts, metrics.Mount{
+				Path: clip(m.Path, maxMountPathLen), FSType: clip(m.FSType, maxFSTypeLen),
+				TotalBytes: m.Total, UsedBytes: m.Used, UsedPercent: float32(m.UsedPercent),
+			})
+		}
+	}
+	if md.Interfaces != nil {
+		s.Interfaces = make([]metrics.IfaceCounters, 0, min(len(md.Interfaces), metrics.MaxInterfaces))
+		for _, i := range md.Interfaces[:min(len(md.Interfaces), metrics.MaxInterfaces)] {
+			s.Interfaces = append(s.Interfaces, metrics.IfaceCounters{
+				Name: clip(i.Name, maxIfaceNameLen), RxTotal: i.BytesRecv, TxTotal: i.BytesSent,
+			})
+		}
+	}
+	return s
+}
+
+// processData is the F9 payload (docs/platform-v2.md 6.2).
+type processData struct {
+	Total     int `json:"total"`
+	Processes []struct {
+		PID  int32   `json:"pid"`
+		Name string  `json:"name"`
+		User string  `json:"user"`
+		CPU  float64 `json:"cpu"`
+		Mem  float64 `json:"mem"`
+		RSS  uint64  `json:"rss"`
+		Cmd  string  `json:"cmd"`
+	} `json:"processes"`
+}
+
+// snapshot bounds the list and its strings and drops values that cannot be
+// shown (negative or non-finite percentages become 0).
+func (pd *processData) snapshot(now time.Time) processes.Snapshot {
+	n := min(len(pd.Processes), processes.MaxProcesses)
+	snap := processes.Snapshot{At: now, Total: max(pd.Total, n), Processes: make([]processes.Process, 0, n)}
+	for _, p := range pd.Processes[:n] {
+		snap.Processes = append(snap.Processes, processes.Process{
+			PID: p.PID, Name: clip(p.Name, maxProcessNameLen), User: clip(p.User, maxProcessUserLen),
+			CPU: nonNegative(p.CPU), Mem: nonNegative(p.Mem), RSS: p.RSS, Cmd: clip(p.Cmd, processes.MaxCmdLen),
+		})
+	}
+	return snap
+}
+
+func nonNegative(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0
+	}
+	return v
+}
+
+// clip cuts s to at most n characters (runes), so a multi-byte name is never
+// split into invalid UTF-8.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i, count := 0, 0
+	for i < len(s) && count < n {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		count++
+	}
+	return s[:i]
 }
 
 func (h *Hub) handleMessage(cn *conn, data []byte, minInterval time.Duration) {
@@ -292,28 +435,19 @@ func (h *Hub) handleMessage(cn *conn, data []byte, minInterval time.Duration) {
 			h.dropped.Add(1)
 			return
 		}
-		// Server time, not the agent's clock: buckets stay aligned even when
-		// a host's clock drifts.
-		sample := metrics.Sample{
-			Time:           h.now(),
-			CPUPercent:     md.CPU.Usage,
-			CPUCores:       md.CPU.Cores,
-			MemTotalBytes:  md.Memory.Total,
-			MemUsedBytes:   md.Memory.Used,
-			MemPercent:     md.Memory.UsedPercent,
-			DiskTotalBytes: md.Disk.Total,
-			DiskUsedBytes:  md.Disk.Used,
-			DiskPercent:    md.Disk.UsedPercent,
-			NetRxTotal:     md.Network.BytesRecv,
-			NetTxTotal:     md.Network.BytesSent,
-			UptimeSeconds:  md.Uptime,
-		}
-		if err := h.rec.Sample(cn.serverID, sample, minInterval); err != nil {
+		if err := h.rec.Sample(cn.serverID, md.sample(h.now()), minInterval); err != nil {
 			h.dropped.Add(1)
 			if !errors.Is(err, metrics.ErrTooFrequent) {
 				h.log.Debug("rejected sample", "server_id", cn.serverID, "err", err)
 			}
 		}
+	case msgProcesses:
+		var pd processData
+		if err := json.Unmarshal(msg.Data, &pd); err != nil {
+			h.dropped.Add(1)
+			return
+		}
+		h.rec.Processes(cn.serverID, pd.snapshot(h.now()))
 	case msgAlert:
 		// Ignored: alert rules run in the backend now.
 	default:

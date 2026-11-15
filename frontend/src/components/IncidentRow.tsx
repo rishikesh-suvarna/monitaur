@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import { BellSlashIcon, ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -6,7 +6,16 @@ import type { Incident } from '../api/types';
 import { useNow } from '../hooks/useNow';
 import { cn } from '../lib/cn';
 import { formatDayTime, formatDuration, toTime } from '../lib/format';
-import { incidentDurationSeconds, incidentPeak, incidentThreshold, resolvedHowLabel } from '../lib/incidents';
+import { checkPath } from '../lib/checks';
+import {
+  hasValueMeter,
+  incidentDurationSeconds,
+  incidentPeak,
+  incidentSubject,
+  incidentThreshold,
+  resolvedHowLabel,
+  type IncidentSubject,
+} from '../lib/incidents';
 import { incidentTitle, presentIncident } from '../lib/status';
 
 import { Button } from './Button';
@@ -20,6 +29,28 @@ const LEFT_BORDER = { crit: 'border-l-crit', warn: 'border-l-warn', off: 'border
 const PEAK_TEXT_CLASS = { crit: 'text-crit', warn: 'text-warn', off: 'text-off', resolved: 'text-ink-muted' } as const;
 const PERCENT_SCALE = 100;
 const RATE_HEADROOM = 1.2;
+
+/** The server or uptime check an incident belongs to, as a link (plain text when the id is unknown). */
+function SubjectLink({ subject, className }: { subject: IncidentSubject; className?: string }) {
+  if (subject.id === null) return <span className={className}>{subject.name}</span>;
+  const to = subject.kind === 'check' ? checkPath(subject.id) : serverPath(subject.id);
+  return (
+    <Link to={to} className={className}>
+      {subject.name}
+    </Link>
+  );
+}
+
+/** F11: recorded during a maintenance window, so no channel was notified. */
+export function SilencedChip({ className }: { className?: string }) {
+  return (
+    <Chip className={className}>
+      <BellSlashIcon className="h-3 w-3" strokeWidth={1.8} aria-hidden="true" />
+      Silenced
+      <span className="sr-only"> by a maintenance window, nobody was notified</span>
+    </Chip>
+  );
+}
 
 function ackedLabel(incident: Incident): string {
   const time = toTime(incident.acked_at);
@@ -71,9 +102,10 @@ export function IncidentRow({
   const threshold = incidentThreshold(incident);
   const scale =
     incident.unit === '%' ? PERCENT_SCALE : Math.max(incident.peak, incident.threshold) * RATE_HEADROOM || PERCENT_SCALE;
-  const meter = incident.metric !== 'heartbeat';
+  const meter = hasValueMeter(incident);
   const lasted = formatDuration(incidentDurationSeconds(incident, now));
   const actionTitle = canAct ? undefined : disabledReason;
+  const subject = incidentSubject(incident);
 
   return (
     <div className="border-b border-line">
@@ -89,11 +121,10 @@ export function IncidentRow({
             <StatusBadge status={look.status} size="sm" text={look.label} />
             <span className="font-semibold">{incidentTitle(incident)}</span>
             {incident.state === 'acked' && <Chip>{ackedLabel(incident)}</Chip>}
+            {incident.silenced && <SilencedChip />}
           </div>
           <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 text-[12px] text-ink-muted">
-            <Link to={serverPath(incident.server_id)} className="font-medium">
-              {incident.server_name}
-            </Link>
+            <SubjectLink subject={subject} className="font-medium" />
             <span className="num">started {formatDayTime(incident.started_at, now)}</span>
             <span className="num">
               lasted {lasted}
@@ -177,6 +208,7 @@ export function IncidentCard({
   const threshold = incidentThreshold(incident);
   const duration = formatDuration(incidentDurationSeconds(incident, now), 1);
   const acked = incident.state === 'acked';
+  const subject = incidentSubject(incident);
   const ack =
     !acked && onAck ? (
       <Button
@@ -186,7 +218,7 @@ export function IncidentCard({
         loading={ackPending}
         disabled={!canAct}
         title={canAct ? undefined : disabledReason}
-        aria-label={`Acknowledge ${incidentTitle(incident)} on ${incident.server_name}`}
+        aria-label={`Acknowledge ${incidentTitle(incident)} on ${subject.name}`}
       >
         Ack
       </Button>
@@ -198,10 +230,8 @@ export function IncidentCard({
         <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
           <span className="text-[13px] font-semibold">{incidentTitle(incident)}</span>
           <span className="truncate text-[12px] text-ink-muted">
-            <Link to={serverPath(incident.server_id)} className="text-ink-muted no-underline hover:text-ink">
-              {incident.server_name}
-            </Link>{' '}
-            · <span className="num">{duration}</span>
+            <SubjectLink subject={subject} className="text-ink-muted no-underline hover:text-ink" /> · <span className="num">{duration}</span>
+            {incident.silenced && <span> · silenced</span>}
           </span>
         </div>
         {acked ? <Chip>Acked</Chip> : ack}
@@ -213,12 +243,11 @@ export function IncidentCard({
     <div className={cn('flex flex-col gap-2 rounded-lg border border-l-[3px] border-line bg-surface-1 px-3.5 py-3', LEFT_BORDER[look.bar])}>
       <div className="flex items-center gap-2">
         <StatusBadge status={look.status} size="sm" text={look.label} />
+        {incident.silenced && <SilencedChip />}
         <span className="num ml-auto text-[12px] text-ink-faint">{duration}</span>
       </div>
       <div className="text-[13px] font-semibold">{incidentTitle(incident)}</div>
-      <Link to={serverPath(incident.server_id)} className="truncate text-[13px] text-ink-muted no-underline hover:text-ink">
-        {incident.server_name}
-      </Link>
+      <SubjectLink subject={subject} className="truncate text-[13px] text-ink-muted no-underline hover:text-ink" />
       <div className="flex items-center gap-2">
         <span className="num flex-1 text-[12px] text-ink-muted">
           peak <span className="text-ink">{incidentPeak(incident, now)}</span>

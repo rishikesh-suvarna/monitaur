@@ -53,6 +53,28 @@ export const SERIES_REFRESH_MS: Record<SeriesRange, number> = {
   '30d': 300_000,
 };
 
+/**
+ * The agent sends a process list every 30 s or more (section 6.2), so a 15 s
+ * poll is never more than one list behind.
+ */
+export const PROCESSES_REFRESH_MS = 15_000;
+
+/**
+ * GET /servers/:id/processes, served from memory. Mount it only while the
+ * Processes tab is open: it polls while mounted, and TanStack Query pauses the
+ * interval while the browser tab is hidden.
+ */
+export function useServerProcesses(serverId: number | null, options: PollOptions = {}) {
+  const orgId = useOrgId();
+  return useQuery({
+    queryKey: queryKeys.serverProcesses(orgId, serverId ?? -1),
+    queryFn: ({ signal }) => api.servers.processes(orgId, serverId ?? -1, signal),
+    enabled: serverId !== null && (options.enabled ?? true),
+    refetchInterval: options.refetchInterval ?? PROCESSES_REFRESH_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
 /** GET /servers/:id/series?range= */
 export function useServerSeries(serverId: number | null, range: SeriesRange, options: PollOptions = {}) {
   const orgId = useOrgId();

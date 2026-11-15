@@ -4,7 +4,8 @@ import { Link } from 'react-router-dom';
 import type { Incident } from '../../api/types';
 import { useNow } from '../../hooks/useNow';
 import { formatClock, formatDayTime } from '../../lib/format';
-import { incidentDurationLabel, incidentPeak, incidentThreshold, nextNotifyLabel, resolvedHowLabel } from '../../lib/incidents';
+import { checkPath } from '../../lib/checks';
+import { incidentDurationLabel, incidentPeak, incidentSubject, incidentThreshold, nextNotifyLabel, resolvedHowLabel } from '../../lib/incidents';
 import { ruleEditPath } from '../server-settings/ruleScope';
 
 function Row({ term, children }: { term: string; children: ReactNode }) {
@@ -24,32 +25,47 @@ function Row({ term, children }: { term: string; children: ReactNode }) {
 export function IncidentDetails({ incident }: { incident: Incident }) {
   const now = useNow();
   const threshold = incidentThreshold(incident);
+  const subject = incidentSubject(incident);
+  const check = subject.kind === 'check';
   return (
     <dl className="num m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[12px] md:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
-      <Row term="Samples over">{incident.samples_over.toLocaleString()}</Row>
-      <Row term="Rule">
-        {incident.rule_id === null ? (
-          <span className="text-ink-muted">{incident.rule_name || 'Deleted rule'}</span>
-        ) : (
-          <Link to={ruleEditPath(incident.rule_id)}>{incident.rule_name || `Rule ${incident.rule_id}`}</Link>
-        )}
-      </Row>
+      <Row term={check ? 'Results over' : 'Samples over'}>{incident.samples_over.toLocaleString()}</Row>
+      {check && subject.id !== null ? (
+        <Row term="Check">
+          <Link to={checkPath(subject.id)}>{subject.name}</Link>
+        </Row>
+      ) : (
+        <Row term="Rule">
+          {incident.rule_id === null ? (
+            <span className="text-ink-muted">{incident.rule_name || 'Deleted rule'}</span>
+          ) : (
+            <Link to={ruleEditPath(incident.rule_id)}>{incident.rule_name || `Rule ${incident.rule_id}`}</Link>
+          )}
+        </Row>
+      )}
       <Row term="Peak / threshold">
         {incidentPeak(incident, now)}
         {threshold && (
           <span className="text-ink-muted">
             {' '}
-            / {incident.comparison} {threshold}
+            {/* A certificate incident's threshold is the check's warning window, not a rule comparison. */}
+            / {incident.metric === 'tls_expiry' ? 'warns at' : incident.comparison} {threshold}
           </span>
         )}
       </Row>
-      <Row term="Notified">{incident.notified_channels.length > 0 ? incident.notified_channels.join(', ') : 'nobody yet'}</Row>
+      <Row term="Notified">
+        {incident.silenced
+          ? 'nobody, silenced by a maintenance window'
+          : incident.notified_channels.length > 0
+            ? incident.notified_channels.join(', ')
+            : 'nobody yet'}
+      </Row>
       <Row term="Started">
         <time dateTime={incident.started_at} title={formatClock(incident.started_at)}>
           {formatDayTime(incident.started_at, now)}
         </time>
       </Row>
-      <Row term="Next notify">{nextNotifyLabel(incident, now)}</Row>
+      <Row term="Next notify">{incident.silenced && incident.state !== 'resolved' ? 'silenced' : nextNotifyLabel(incident, now)}</Row>
       <Row term="Duration">{incidentDurationLabel(incident, now)}</Row>
       {incident.state === 'acked' && (
         <Row term="Acknowledged">

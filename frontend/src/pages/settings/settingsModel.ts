@@ -38,6 +38,8 @@ export interface StatusPageForm {
   title: string;
   slug: string;
   serverIds: number[];
+  /** Uptime checks on the page (F7). */
+  checkIds: number[];
 }
 
 export function statusPageForm(org: Pick<Org, 'slug' | 'status_page'>): StatusPageForm {
@@ -46,6 +48,7 @@ export function statusPageForm(org: Pick<Org, 'slug' | 'status_page'>): StatusPa
     title: org.status_page.title,
     slug: org.slug,
     serverIds: [...org.status_page.server_ids],
+    checkIds: [...(org.status_page.check_ids ?? [])],
   };
 }
 
@@ -53,17 +56,28 @@ const sameIds = (a: readonly number[], b: readonly number[]): boolean =>
   a.length === b.length && [...a].sort((x, y) => x - y).every((id, index) => id === [...b].sort((x, y) => x - y)[index]);
 
 export function statusPageDirty(saved: StatusPageForm, form: StatusPageForm): boolean {
-  return saved.enabled !== form.enabled || saved.title.trim() !== form.title.trim() || saved.slug !== form.slug || !sameIds(saved.serverIds, form.serverIds);
+  return (
+    saved.enabled !== form.enabled ||
+    saved.title.trim() !== form.title.trim() ||
+    saved.slug !== form.slug ||
+    !sameIds(saved.serverIds, form.serverIds) ||
+    !sameIds(saved.checkIds, form.checkIds)
+  );
 }
 
 export interface StatusPagePatch {
   slug?: string;
-  status_page: { enabled: boolean; title: string; server_ids: number[] };
+  status_page: { enabled: boolean; title: string; server_ids: number[]; check_ids: number[] };
 }
 
-/** PATCH /org body: status_page replaces the whole config; slug only when it changed. */
+/**
+ * PATCH /org body: status_page replaces the whole config (so check_ids always
+ * goes, or a save would drop them); slug only when it changed.
+ */
 export function statusPagePatch(saved: StatusPageForm, form: StatusPageForm): StatusPagePatch {
-  const patch: StatusPagePatch = { status_page: { enabled: form.enabled, title: form.title.trim(), server_ids: [...form.serverIds] } };
+  const patch: StatusPagePatch = {
+    status_page: { enabled: form.enabled, title: form.title.trim(), server_ids: [...form.serverIds], check_ids: [...form.checkIds] },
+  };
   if (form.slug !== saved.slug) patch.slug = form.slug;
   return patch;
 }

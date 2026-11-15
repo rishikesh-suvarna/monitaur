@@ -170,8 +170,12 @@ func (a *API) deleteChannel(c *gin.Context) {
 		a.handleErr(c, err)
 		return
 	}
-	// Rules dropped the channel ID in the same transaction.
+	// Rules and checks dropped the channel ID in the same transaction.
 	if err := a.reloadOrgRules(ctx, p.OrgID); err != nil {
+		a.handleErr(c, err)
+		return
+	}
+	if err := a.reloadOrgChecks(ctx, p.OrgID); err != nil {
 		a.handleErr(c, err)
 		return
 	}

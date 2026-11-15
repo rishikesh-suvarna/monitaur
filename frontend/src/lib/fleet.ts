@@ -2,7 +2,7 @@
 import type { Incident, ServerStatus, ServerSummary } from '../api/types';
 
 import { formatAge, secondsSince } from './format';
-import { METRIC_LABELS, compareStatus, formatMetricValue, presentIncident } from './status';
+import { compareStatus, formatMetricValue, metricLabel, presentIncident } from './status';
 
 export type StatusCounts = Record<ServerStatus, number> & { all: number };
 
@@ -107,7 +107,7 @@ function reasonFor(server: ServerSummary, incidents: readonly Incident[], now: n
   if (incident) {
     const since = secondsSince(incident.started_at, now);
     return {
-      subject: incident.metric === 'heartbeat' ? 'no heartbeat' : METRIC_LABELS[incident.metric].toLowerCase(),
+      subject: incident.metric === 'heartbeat' ? 'no heartbeat' : metricLabel(incident.metric).toLowerCase(),
       value: incident.metric === 'heartbeat' ? null : formatMetricValue(incident.last_value, incident.unit),
       duration: since === null ? null : formatAge(since),
     };

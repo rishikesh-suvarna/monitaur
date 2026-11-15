@@ -3,12 +3,12 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useOpenIncidentCount } from '../../hooks/useOpenIncidentCount';
 import { cn } from '../../lib/cn';
 
-import { isNavActive, NAV_ITEMS } from './navItems';
+import { isNavActive, TAB_BAR_ITEMS } from './navItems';
 
 /** Height of the tab bar above the safe area (TabBar.dc.html is 84 incl. 22 bottom). */
 export const TAB_BAR_HEIGHT_PX = 84;
 
-/** TabBar.dc.html: five tabs on mobile (< 768 px), accent when current. */
+/** TabBar.dc.html: five tabs on mobile (< 768 px), accent when current. Channels is reached from Settings. */
 export function TabBar() {
   const { pathname } = useLocation();
   const openCount = useOpenIncidentCount();
@@ -18,7 +18,7 @@ export function TabBar() {
       aria-label="Primary"
       className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-line bg-surface-1 px-2 pt-1.5 pb-[max(22px,env(safe-area-inset-bottom))]"
     >
-      {NAV_ITEMS.map((item) => {
+      {TAB_BAR_ITEMS.map((item) => {
         const active = isNavActive(item, pathname);
         const Icon = item.icon;
         const count = item.key === 'alerts' && openCount !== null && openCount > 0 ? openCount : null;

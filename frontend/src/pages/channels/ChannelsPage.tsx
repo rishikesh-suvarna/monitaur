@@ -81,6 +81,7 @@ export default function ChannelsPage() {
     <>
       <PageHeader
         title="Notification channels"
+        back={{ to: '/settings', label: 'Back to settings' }}
         description="Where alerts go. Rules pick channels; a disabled channel is skipped everywhere."
         actions={channels.data && sorted.length > 0 ? addMenu(false) : undefined}
         mobileActions={channels.data && sorted.length > 0 ? addMenu(true) : undefined}

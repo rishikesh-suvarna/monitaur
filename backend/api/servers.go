@@ -13,6 +13,7 @@ import (
 	"backend/alerting"
 	"backend/auth"
 	"backend/metrics"
+	"backend/processes"
 	"backend/secrets"
 	"backend/store"
 )
@@ -49,6 +50,34 @@ type latestJSON struct {
 	CPUCores  int       `json:"cpu_cores"`
 	UptimeS   int64     `json:"uptime_s"`
 	At        time.Time `json:"at"`
+
+	// F6 values (docs/platform-v2.md 6.1): null when the agent does not
+	// report them, never 0. Disk rates are bytes/s.
+	Load1      *float32    `json:"load1"`
+	Load5      *float32    `json:"load5"`
+	Load15     *float32    `json:"load15"`
+	Swap       *float32    `json:"swap"`
+	SwapTotal  *uint64     `json:"swap_total"`
+	SwapUsed   *uint64     `json:"swap_used"`
+	DiskRead   *float32    `json:"disk_read"`
+	DiskWrite  *float32    `json:"disk_write"`
+	Mounts     []mountJSON `json:"mounts"`     // null when not reported
+	Interfaces []ifaceJSON `json:"interfaces"` // null when not reported
+}
+
+type mountJSON struct {
+	Path   string  `json:"path"`
+	FSType string  `json:"fstype"`
+	Total  uint64  `json:"total"`
+	Used   uint64  `json:"used"`
+	Pct    float32 `json:"pct"`
+}
+
+// ifaceJSON rates are bytes/s.
+type ifaceJSON struct {
+	Name string  `json:"name"`
+	In   float32 `json:"in"`
+	Out  float32 `json:"out"`
 }
 
 type sparkJSON struct {
@@ -69,8 +98,10 @@ type serverJSON struct {
 	Latest        *latestJSON `json:"latest"`
 	Spark         sparkJSON   `json:"spark"`
 	OpenIncidents int         `json:"open_incidents"`
+	Maintenance   bool        `json:"maintenance"` // an active maintenance window covers it
 	// Thresholds of enabled "above" rules that apply to this server, keyed
-	// like latest (cpu, mem, disk, net_in, net_out), so lists can colour values.
+	// like latest (cpu, mem, disk, net_in, net_out, load1, swap), so lists
+	// can colour values.
 	Thresholds map[string]thresholdJSON `json:"thresholds"`
 	CreatedAt  time.Time                `json:"created_at"`
 }
@@ -85,14 +116,33 @@ type liveJSON struct {
 	// Agents report their version on connect, which can happen after the
 	// client cached the server list.
 	AgentVersion string `json:"agent_version"`
+	Maintenance  bool   `json:"maintenance"`
 }
 
 func toLatestJSON(l metrics.Latest) *latestJSON {
-	return &latestJSON{
+	out := &latestJSON{
 		CPU: l.CPU, Mem: l.Mem, Disk: l.Disk, NetIn: l.NetInBps, NetOut: l.NetOutBps,
 		MemTotal: l.MemTotalBytes, MemUsed: l.MemUsedBytes, DiskTotal: l.DiskTotalBytes, DiskUsed: l.DiskUsedBytes,
 		CPUCores: l.CPUCores, UptimeS: l.UptimeSeconds, At: l.ReceivedAt,
 	}
+	if l.Extended {
+		out.Load1, out.Load5, out.Load15 = &l.Load1, &l.Load5, &l.Load15
+		out.Swap, out.SwapTotal, out.SwapUsed = &l.Swap, &l.SwapTotalBytes, &l.SwapUsedBytes
+		out.DiskRead, out.DiskWrite = &l.DiskReadBps, &l.DiskWriteBps
+	}
+	if l.Mounts != nil {
+		out.Mounts = make([]mountJSON, len(l.Mounts))
+		for i, m := range l.Mounts {
+			out.Mounts[i] = mountJSON{Path: m.Path, FSType: m.FSType, Total: m.TotalBytes, Used: m.UsedBytes, Pct: m.UsedPercent}
+		}
+	}
+	if l.Interfaces != nil {
+		out.Interfaces = make([]ifaceJSON, len(l.Interfaces))
+		for i, n := range l.Interfaces {
+			out.Interfaces[i] = ifaceJSON{Name: n.Name, In: n.InBps, Out: n.OutBps}
+		}
+	}
+	return out
 }
 
 // status follows the design's encoding: critical (incl. unreachable > 5 min,
@@ -135,6 +185,7 @@ func (a *API) summary(s store.Server, pins map[int64]bool, open map[int64]int) s
 		Thresholds: a.thresholds(s),
 		Spark:      sparkJSON{CPU: nonNil(cpu), Mem: nonNil(mem), Disk: nonNil(disk)},
 	}
+	out.Maintenance = a.inMaintenance(s)
 	if latest != nil {
 		out.Latest = toLatestJSON(*latest)
 	}
@@ -162,6 +213,7 @@ func (a *API) liveServers(orgID int64) []liveJSON {
 	for _, s := range servers {
 		status, connected, latest := a.status(s.ID)
 		l := liveJSON{ID: s.ID, Status: status, Connected: connected, LastSeen: a.lastSeen(s, latest), AgentVersion: s.AgentVersion}
+		l.Maintenance = a.inMaintenance(s)
 		if latest != nil {
 			l.Latest = toLatestJSON(*latest)
 		}
@@ -390,6 +442,7 @@ func (a *API) purgeServer(c *gin.Context, serverID int64) {
 	srv, _ := a.Dir.Server(serverID)
 	a.Dir.RemoveServer(serverID)
 	a.Metrics.Forget(serverID)
+	a.Processes.Forget(serverID)
 	a.Engine.RemoveServer(c.Request.Context(), serverID)
 	a.Hub.Disconnect(serverID)
 	a.Broker.Publish(srv.OrgID, eventIncident, map[string]string{"action": "refresh"})
@@ -445,7 +498,8 @@ type thresholdJSON struct {
 // on the charts, matching what would actually fire first.
 func (a *API) thresholds(s store.Server) map[string]thresholdJSON {
 	keys := map[string]string{"cpu": metrics.SeriesCPU, "memory": metrics.SeriesMem, "disk": metrics.SeriesDisk,
-		"net_in": metrics.SeriesNetIn, "net_out": metrics.SeriesNetOut}
+		"net_in": metrics.SeriesNetIn, "net_out": metrics.SeriesNetOut,
+		"load1": metrics.SeriesLoad1, "swap": metrics.SeriesSwap}
 	out := map[string]thresholdJSON{}
 	for _, r := range a.rulesFor(s) {
 		key, ok := keys[r.Metric]
@@ -488,4 +542,25 @@ func (a *API) series(c *gin.Context) {
 		"range": s.Range, "step_seconds": s.StepSeconds, "from": s.From, "to": s.To,
 		"points": nonNil(s.Points), "stats": s.Stats, "thresholds": a.thresholds(srv),
 	})
+}
+
+type processesJSON struct {
+	At        *time.Time          `json:"at"` // null until the agent sends a list
+	Total     int                 `json:"total"`
+	Processes []processes.Process `json:"processes"`
+}
+
+// serverProcesses returns the latest top-processes list the agent sent
+// (F9). It is served from memory: nothing about processes is persisted.
+func (a *API) serverProcesses(c *gin.Context) {
+	srv, _, ok := a.orgServer(c)
+	if !ok {
+		return
+	}
+	out := processesJSON{Processes: []processes.Process{}}
+	if snap, ok := a.Processes.Get(srv.ID); ok {
+		at := snap.At
+		out.At, out.Total, out.Processes = &at, snap.Total, nonNil(snap.Processes)
+	}
+	c.JSON(http.StatusOK, out)
 }

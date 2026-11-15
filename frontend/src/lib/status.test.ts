@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { makeIncident, makeServer } from '../test/fixtures';
 
 import { buildVerdict, countByStatus, filterServers, sortServers, verdictHeadline } from './fleet';
-import { breachesByServer, compareStatus, incidentTitle, presentIncident, sortActiveIncidents, worstStatus } from './status';
+import { breachesByServer, compareStatus, formatMetricValue, incidentTitle, presentIncident, sortActiveIncidents, worstStatus } from './status';
 
 describe('status ranking', () => {
   it('orders worst first: critical, warning, offline, healthy', () => {
@@ -33,6 +33,12 @@ describe('incidentTitle', () => {
     expect(incidentTitle({ metric: 'disk', threshold: 90, peak: 94.6, unit: '%' })).toBe('Disk above 90%');
     expect(incidentTitle({ metric: 'memory', threshold: 20, peak: 12, unit: '%' })).toBe('Memory below 20%');
     expect(incidentTitle({ metric: 'heartbeat', threshold: 0, peak: 0, unit: '' })).toBe('No heartbeat');
+  });
+
+  it('keeps the decimals of a unitless load threshold and peak', () => {
+    expect(incidentTitle({ metric: 'load1', threshold: 6.5, peak: 7.42, unit: '' })).toBe('Load average above 6.5');
+    expect(formatMetricValue(7.4213, '')).toBe('7.42');
+    expect(formatMetricValue(12, '')).toBe('12');
   });
 });
 

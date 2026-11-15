@@ -6,6 +6,7 @@ import { cn } from '../lib/cn';
 import type { MetricBreaches } from '../lib/status';
 
 import { Chip } from './Chip';
+import { MaintenanceBadge } from './MaintenanceBadge';
 import { RelativeTime } from './RelativeTime';
 import { STRETCHED_LINK, metricCells, isStale, netThroughput, serverPath, VALUE_TONE_CLASS } from './serverMetrics';
 import { Sparkline } from './Sparkline';
@@ -43,9 +44,19 @@ export const ServerRow = memo(function ServerRow({ server, breaches }: ServerRow
         >
           {server.name}
         </Link>
-        {server.tags.map((tag) => (
-          <Chip key={tag}>{tag}</Chip>
-        ))}
+        {server.maintenance && <MaintenanceBadge />}
+        {server.tags.length > 0 && (
+          // Tags give way first (shrink-[100]) so the name and the maintenance badge keep their room;
+          // chips that no longer fit wrap onto a hidden second line instead of being cut in half. The
+          // zero-width lead item makes even the first chip wrap away (a line's first item never wraps),
+          // and -ml-2 takes back the gap it adds.
+          <span className="-ml-2 flex h-[22px] min-w-0 shrink-[100] flex-wrap gap-x-2 overflow-hidden">
+            <span aria-hidden="true" className="h-[22px] w-0" />
+            {server.tags.map((tag) => (
+              <Chip key={tag}>{tag}</Chip>
+            ))}
+          </span>
+        )}
       </span>
       {cells.map((cell) => (
         <span role="cell" key={cell.key} className="flex items-center gap-2.5 pr-3">

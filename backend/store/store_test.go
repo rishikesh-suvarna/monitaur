@@ -113,6 +113,15 @@ func TestMigrateLegacyDatabase(t *testing.T) {
 	if minutes[0].Samples != 12 || minutes[0].CPUMax < minutes[0].CPUAvg {
 		t.Fatalf("bucket = %+v", minutes[0])
 	}
+	// v1 data has no extended (F6) values: NULL in SQL, ExtSamples 0 in Go.
+	if minutes[0].ExtSamples != 0 || minutes[0].Load1Avg != 0 {
+		t.Fatalf("legacy bucket has extended values: %+v", minutes[0])
+	}
+	var extRows int
+	if err := pool.QueryRow(c, `SELECT count(*) FROM metrics_1m WHERE ext_samples <> 0 OR load1_avg IS NOT NULL
+		OR swap_avg IS NOT NULL OR disk_read_bps_avg IS NOT NULL OR disk_write_bps_max IS NOT NULL`).Scan(&extRows); err != nil || extRows != 0 {
+		t.Fatalf("legacy rows with extended values = %d, %v", extRows, err)
+	}
 	hours, err := st.ReadBuckets(c, 1, metrics.Hour, day, day.Add(24*time.Hour))
 	if err != nil || len(hours) != 1 || hours[0].Samples != 720 {
 		t.Fatalf("hour buckets = %+v, %v", hours, err)
@@ -266,6 +275,128 @@ func TestRollupsIdempotentAndTouch(t *testing.T) {
 	}
 	if _, err := st.ApplyRetention(c); err != nil {
 		t.Fatalf("retention: %v", err)
+	}
+}
+
+// TestRollupsExtendedColumns covers the F6 columns of migration 00003:
+// round-trip, NULL for buckets without extended samples, and merges
+// weighted by ext_samples rather than samples.
+func TestRollupsExtendedColumns(t *testing.T) {
+	pool := testdb.Migrated(t)
+	c := ctx(t)
+	box, _ := secrets.NewBox(bytes.Repeat([]byte{1}, 32))
+	st := store.New(pool, box)
+	u, _ := st.UpsertUser(c, "uid-1", "one@example.com", "", true)
+	org, _ := st.EnsurePersonalOrg(c, u.ID, "legacy")
+	srv, err := st.CreateServer(c, store.NewServer{OrgID: org.ID, Name: "web", TokenHash: "h1", TokenPrefix: "p"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().UTC().Truncate(time.Minute).Add(-10 * time.Minute)
+	at := func(m int) time.Time { return start.Add(time.Duration(m) * time.Minute) }
+	ext := func(m, samples, extSamples int, load, swap, read, write float32) metrics.Bucket {
+		return metrics.Bucket{ServerID: srv.ID, Res: metrics.Minute, Start: at(m), Samples: samples, CPUAvg: 10,
+			ExtSamples: extSamples, Load1Avg: load, Load1Max: load * 2, SwapAvg: swap,
+			DiskReadAvg: read, DiskReadMax: read * 2, DiskWriteAvg: write, DiskWriteMax: write * 2}
+	}
+
+	// A row as written before migration 00003 (or by any code unaware of
+	// the new columns): the columns default to NULL and ext_samples to 0.
+	if _, err := pool.Exec(c, `INSERT INTO metrics_1m (server_id, bucket, samples, cpu_avg) VALUES ($1, $2, 6, 10)`, srv.ID, at(3)); err != nil {
+		t.Fatal(err)
+	}
+	writes := [][]metrics.Bucket{
+		{
+			ext(0, 12, 12, 1.5, 20, 4096, 1024), // F6 agent
+			ext(1, 12, 0, 9, 9, 9, 9),           // older agent: values ignored, NULL
+			ext(2, 6, 6, 1, 10, 100, 0),         // first half of a restart split
+			ext(4, 6, 0, 0, 0, 0, 0),            // both halves without extended samples
+		},
+		{
+			ext(2, 6, 2, 3, 30, 300, 40), // second half: weighted 6:2, not 6:6
+			ext(3, 6, 4, 2, 50, 10, 10),  // merged into the pre-00003 row
+			ext(4, 6, 0, 0, 0, 0, 0),
+		},
+	}
+	for _, w := range writes {
+		if err := st.WriteBuckets(c, w); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	got, err := st.ReadBuckets(c, srv.ID, metrics.Minute, start, at(5))
+	if err != nil || len(got) != 5 {
+		t.Fatalf("read = %+v, %v", got, err)
+	}
+	tests := []struct {
+		name                    string
+		samples, extSamples     int
+		load, loadMax, swap     float32
+		read, readMax, writeAvg float32
+	}{
+		{"round trip", 12, 12, 1.5, 3, 20, 4096, 8192, 1024},
+		{"older agent reads back as no extended data", 12, 0, 0, 0, 0, 0, 0, 0},
+		{"restart split merges by ext_samples", 12, 8, 1.5, 6, 15, 150, 600, 10},
+		{"pre-00003 row merges with an F6 write", 12, 4, 2, 4, 50, 10, 20, 10},
+		{"no extended samples on either side", 12, 0, 0, 0, 0, 0, 0, 0},
+	}
+	for i, tc := range tests {
+		b := got[i]
+		if b.Samples != tc.samples || b.ExtSamples != tc.extSamples || b.Load1Avg != tc.load || b.Load1Max != tc.loadMax ||
+			b.SwapAvg != tc.swap || b.DiskReadAvg != tc.read || b.DiskReadMax != tc.readMax || b.DiskWriteAvg != tc.writeAvg {
+			t.Errorf("%s: got samples %d ext %d load %v/%v swap %v read %v/%v write %v, want %+v", tc.name,
+				b.Samples, b.ExtSamples, b.Load1Avg, b.Load1Max, b.SwapAvg, b.DiskReadAvg, b.DiskReadMax, b.DiskWriteAvg, tc)
+		}
+	}
+
+	// NULL in SQL, not 0, wherever there were no extended samples.
+	var nulls []bool
+	rows, err := pool.Query(c, `SELECT load1_avg IS NULL AND load1_max IS NULL AND swap_avg IS NULL AND disk_read_bps_avg IS NULL
+		AND disk_read_bps_max IS NULL AND disk_write_bps_avg IS NULL AND disk_write_bps_max IS NULL
+		FROM metrics_1m WHERE server_id = $1 ORDER BY bucket`, srv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var null bool
+		if err := rows.Scan(&null); err != nil {
+			t.Fatal(err)
+		}
+		nulls = append(nulls, null)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []bool{false, true, false, false, true}; len(nulls) != len(want) || nulls[0] != want[0] || nulls[1] != want[1] ||
+		nulls[2] != want[2] || nulls[3] != want[3] || nulls[4] != want[4] {
+		t.Fatalf("all-NULL extended columns per bucket = %v, want %v", nulls, want)
+	}
+
+	// Hour rollups carry the same columns.
+	hour := metrics.Bucket{ServerID: srv.ID, Res: metrics.Hour, Start: start.Truncate(time.Hour), Samples: 720,
+		ExtSamples: 360, Load1Avg: 0.5, Load1Max: 4, SwapAvg: 1, DiskReadAvg: 2, DiskReadMax: 3, DiskWriteAvg: 4, DiskWriteMax: 5}
+	if err := st.WriteBuckets(c, []metrics.Bucket{hour}); err != nil {
+		t.Fatal(err)
+	}
+	hours, err := st.ReadBuckets(c, srv.ID, metrics.Hour, hour.Start, hour.Start.Add(time.Hour))
+	if err != nil || len(hours) != 1 {
+		t.Fatalf("hours = %+v, %v", hours, err)
+	}
+	if h := hours[0]; h.ExtSamples != 360 || h.Load1Avg != 0.5 || h.Load1Max != 4 || h.DiskWriteMax != 5 {
+		t.Fatalf("hour = %+v", h)
+	}
+
+	// The widened CHECK accepts rules on the new metrics.
+	if _, err := st.CreateRules(c, org.ID, []store.Rule{
+		{Name: "load", Enabled: true, ScopeAll: true, Metric: "load1", Comparison: "above", Threshold: 4, Severity: "warning"},
+		{Name: "swap", Enabled: true, ScopeAll: true, Metric: "swap", Comparison: "above", Threshold: 80, Severity: "warning"},
+	}, 0); err != nil {
+		t.Fatalf("create load1/swap rules: %v", err)
+	}
+	if _, err := st.CreateRules(c, org.ID, []store.Rule{
+		{Name: "bogus", Enabled: true, ScopeAll: true, Metric: "load5", Comparison: "above", Threshold: 4, Severity: "warning"},
+	}, 0); err == nil {
+		t.Fatal("rule on an unknown metric accepted by the CHECK")
 	}
 }
 

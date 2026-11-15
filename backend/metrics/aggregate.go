@@ -53,14 +53,27 @@ type rawPoint struct {
 	cpu, mem, disk, in, out float32
 }
 
-func (p rawPoint) point() Point {
+// xpoint is the extended (F6) part of a raw point, 20 bytes. It lives in a
+// ring beside the raw ring (see extRing) so servers on older agents do not
+// pay for it.
+type xpoint struct {
+	load1, swap, read, write float32
+	ok                       bool // the sample carried extended values
+}
+
+func (p rawPoint) point(x xpoint) Point {
 	return Point{
-		Time:      time.Unix(0, p.t).UTC(),
-		CPU:       p.cpu,
-		Mem:       p.mem,
-		Disk:      p.disk,
-		NetInBps:  p.in,
-		NetOutBps: p.out,
+		Time:         time.Unix(0, p.t).UTC(),
+		CPU:          p.cpu,
+		Mem:          p.mem,
+		Disk:         p.disk,
+		NetInBps:     p.in,
+		NetOutBps:    p.out,
+		Extended:     x.ok,
+		Load1:        x.load1,
+		Swap:         x.swap,
+		DiskReadBps:  x.read,
+		DiskWriteBps: x.write,
 	}
 }
 
@@ -78,7 +91,24 @@ type cbucket struct {
 	outAvg, outMax                float32
 }
 
-func (b cbucket) toBucket(serverID int64, res Resolution) Bucket {
+// xbucket is the extended (F6) part of a closed rollup, 32 bytes. Like
+// xpoint it sits in a ring of its own beside the bucket rings.
+type xbucket struct {
+	n                  uint32 // samples that carried extended values
+	load1Avg, load1Max float32
+	swapAvg            float32
+	readAvg, readMax   float32
+	writeAvg, writeMax float32
+}
+
+// fbucket is a whole rollup, base and extended part, as it moves between the
+// aggregates, the rings, History and the Sink.
+type fbucket struct {
+	cbucket
+	x xbucket
+}
+
+func (b fbucket) toBucket(serverID int64, res Resolution) Bucket {
 	return Bucket{
 		ServerID:       serverID,
 		Res:            res,
@@ -97,11 +127,19 @@ func (b cbucket) toBucket(serverID int64, res Resolution) Bucket {
 		DiskTotalBytes: b.diskTotal,
 		DiskUsedBytes:  b.diskUsed,
 		UptimeSeconds:  int64(b.uptime),
+		ExtSamples:     int(b.x.n),
+		Load1Avg:       b.x.load1Avg,
+		Load1Max:       b.x.load1Max,
+		SwapAvg:        b.x.swapAvg,
+		DiskReadAvg:    b.x.readAvg,
+		DiskReadMax:    b.x.readMax,
+		DiskWriteAvg:   b.x.writeAvg,
+		DiskWriteMax:   b.x.writeMax,
 	}
 }
 
-func compactBucket(b Bucket) cbucket {
-	return cbucket{
+func compactBucket(b Bucket) fbucket {
+	out := fbucket{cbucket: cbucket{
 		memTotal:  b.MemTotalBytes,
 		diskTotal: b.DiskTotalBytes,
 		diskUsed:  b.DiskUsedBytes,
@@ -117,18 +155,79 @@ func compactBucket(b Bucket) cbucket {
 		inMax:     b.NetInMax,
 		outAvg:    b.NetOutAvg,
 		outMax:    b.NetOutMax,
+	}}
+	if n := clampUint32(int64(b.ExtSamples)); n > 0 {
+		out.x = xbucket{
+			n:        n,
+			load1Avg: b.Load1Avg,
+			load1Max: b.Load1Max,
+			swapAvg:  b.SwapAvg,
+			readAvg:  b.DiskReadAvg,
+			readMax:  b.DiskReadMax,
+			writeAvg: b.DiskWriteAvg,
+			writeMax: b.DiskWriteMax,
+		}
 	}
+	return out
 }
 
 // fuller picks between two versions of the same bucket (memory vs History).
 // They only collide around a restart, where each side holds a disjoint part
 // of the period, so the side with more samples is the better partial and we
-// never double count. Ties go to a (memory).
-func fuller(a, b cbucket) cbucket {
+// never double count. Ties go to a (memory). The extended part travels with
+// its base part, so a result never mixes the two versions.
+func fuller(a, b fbucket) fbucket {
 	if b.samples > a.samples {
 		return b
 	}
 	return a
+}
+
+// extRing is a ring of base values plus a ring of extended (F6) values for
+// the same elements. The extended ring stays unallocated until the server
+// first reports extended values, so servers on older agents keep the base
+// memory footprint. From then on both rings are pushed in lockstep, so the
+// extended ring always holds the newest ext.size() elements of the base ring.
+type extRing[B, X any] struct {
+	base ring[B]
+	ext  ring[X]
+	on   bool
+}
+
+func newExtRing[B, X any](limit int) extRing[B, X] {
+	return extRing[B, X]{base: newRing[B](limit), ext: newRing[X](limit)}
+}
+
+// push appends b (and x once the extended ring is on) and reports the base
+// element it evicted, if any. hasExt switches the extended ring on for good.
+func (r *extRing[B, X]) push(b B, x X, hasExt bool) (evicted B, ok bool) {
+	r.on = r.on || hasExt
+	if r.on {
+		r.ext.push(x)
+	}
+	return r.base.push(b)
+}
+
+func (r *extRing[B, X]) size() int { return r.base.size() }
+
+// at returns the i-th element, 0 being the oldest. x is the zero value for
+// elements pushed before the extended ring was switched on.
+func (r *extRing[B, X]) at(i int) (b B, x X) {
+	b = r.base.at(i)
+	if j := i - (r.base.size() - r.ext.size()); j >= 0 {
+		x = r.ext.at(j)
+	}
+	return b, x
+}
+
+// bucketAt is at for bucket rings, joined into one fbucket.
+func bucketAt(r *extRing[cbucket, xbucket], i int) fbucket {
+	b, x := r.at(i)
+	return fbucket{cbucket: b, x: x}
+}
+
+func pushBucket(r *extRing[cbucket, xbucket], b fbucket) (evicted cbucket, ok bool) {
+	return r.push(b.cbucket, b.x, b.x.n > 0)
 }
 
 func clampUint32(v int64) uint32 {
@@ -154,13 +253,19 @@ type agg struct {
 	cpuMax, memMax, inMax, outMax float32
 	memTotal, diskTotal, diskUsed uint64
 	uptime                        int64
+
+	// The extended part is weighted by extSamples, not samples: in a minute
+	// where the agent was upgraded only the extended samples count.
+	extSamples                           uint64
+	load1Sum, swapSum, readSum, writeSum float64
+	load1Max, readMax, writeMax          float32
 }
 
 func (a *agg) begin(start mins) {
 	*a = agg{open: true, start: start}
 }
 
-func (a *agg) addPoint(p rawPoint, smp *Sample) {
+func (a *agg) addPoint(p rawPoint, x xpoint, smp *Sample) {
 	a.samples++
 	a.cpuSum += float64(p.cpu)
 	a.memSum += float64(p.mem)
@@ -175,9 +280,19 @@ func (a *agg) addPoint(p rawPoint, smp *Sample) {
 	a.diskTotal = smp.DiskTotalBytes
 	a.diskUsed = smp.DiskUsedBytes
 	a.uptime = smp.UptimeSeconds
+	if x.ok {
+		a.extSamples++
+		a.load1Sum += float64(x.load1)
+		a.swapSum += float64(x.swap)
+		a.readSum += float64(x.read)
+		a.writeSum += float64(x.write)
+		a.load1Max = max(a.load1Max, x.load1)
+		a.readMax = max(a.readMax, x.read)
+		a.writeMax = max(a.writeMax, x.write)
+	}
 }
 
-func (a *agg) addBucket(b cbucket) {
+func (a *agg) addBucket(b fbucket) {
 	w := float64(b.samples)
 	a.samples += uint64(b.samples)
 	a.cpuSum += float64(b.cpuAvg) * w
@@ -193,10 +308,21 @@ func (a *agg) addBucket(b cbucket) {
 	a.diskTotal = b.diskTotal
 	a.diskUsed = b.diskUsed
 	a.uptime = int64(b.uptime)
+	if x := b.x; x.n > 0 {
+		xw := float64(x.n)
+		a.extSamples += uint64(x.n)
+		a.load1Sum += float64(x.load1Avg) * xw
+		a.swapSum += float64(x.swapAvg) * xw
+		a.readSum += float64(x.readAvg) * xw
+		a.writeSum += float64(x.writeAvg) * xw
+		a.load1Max = max(a.load1Max, x.load1Max)
+		a.readMax = max(a.readMax, x.readMax)
+		a.writeMax = max(a.writeMax, x.writeMax)
+	}
 }
 
-func (a *agg) bucket() cbucket {
-	b := cbucket{
+func (a *agg) bucket() fbucket {
+	b := fbucket{cbucket: cbucket{
 		memTotal:  a.memTotal,
 		diskTotal: a.diskTotal,
 		diskUsed:  a.diskUsed,
@@ -207,7 +333,7 @@ func (a *agg) bucket() cbucket {
 		memMax:    a.memMax,
 		inMax:     a.inMax,
 		outMax:    a.outMax,
-	}
+	}}
 	if a.samples > 0 {
 		n := float64(a.samples)
 		b.cpuAvg = float32(a.cpuSum / n)
@@ -216,27 +342,53 @@ func (a *agg) bucket() cbucket {
 		b.inAvg = float32(a.inSum / n)
 		b.outAvg = float32(a.outSum / n)
 	}
+	if a.extSamples > 0 {
+		n := float64(a.extSamples)
+		b.x = xbucket{
+			n:        clampUint32(int64(min(a.extSamples, math.MaxUint32))),
+			load1Avg: float32(a.load1Sum / n),
+			load1Max: a.load1Max,
+			swapAvg:  float32(a.swapSum / n),
+			readAvg:  float32(a.readSum / n),
+			readMax:  a.readMax,
+			writeAvg: float32(a.writeSum / n),
+			writeMax: a.writeMax,
+		}
+	}
 	return b
 }
 
-// stepAcc averages everything that falls into one Series step.
+// stepAcc averages everything that falls into one Series step. The extended
+// fields have their own weight xw, so a step only gets extended values from
+// samples that carried them.
 type stepAcc struct {
 	w                       float64
 	cpu, mem, disk, in, out float64
+
+	xw                       float64
+	load1, swap, read, write float64
 }
 
-func (s *stepAcc) addPoint(p rawPoint) {
+func (s *stepAcc) addPoint(p rawPoint, x xpoint) {
 	s.w++
 	s.cpu += float64(p.cpu)
 	s.mem += float64(p.mem)
 	s.disk += float64(p.disk)
 	s.in += float64(p.in)
 	s.out += float64(p.out)
+	if x.ok {
+		s.xw++
+		s.load1 += float64(x.load1)
+		s.swap += float64(x.swap)
+		s.read += float64(x.read)
+		s.write += float64(x.write)
+	}
 }
 
 // addBucket weights by sample count. A persisted bucket with Samples == 0
 // (for example backfilled history) still counts once rather than vanishing.
-func (s *stepAcc) addBucket(b cbucket) {
+// Extended values are weighted by their own count and skipped when it is 0.
+func (s *stepAcc) addBucket(b fbucket) {
 	w := float64(max(b.samples, 1))
 	s.w += w
 	s.cpu += float64(b.cpuAvg) * w
@@ -244,4 +396,12 @@ func (s *stepAcc) addBucket(b cbucket) {
 	s.disk += float64(b.diskAvg) * w
 	s.in += float64(b.inAvg) * w
 	s.out += float64(b.outAvg) * w
+	if x := b.x; x.n > 0 {
+		xw := float64(x.n)
+		s.xw += xw
+		s.load1 += float64(x.load1Avg) * xw
+		s.swap += float64(x.swapAvg) * xw
+		s.read += float64(x.readAvg) * xw
+		s.write += float64(x.writeAvg) * xw
+	}
 }

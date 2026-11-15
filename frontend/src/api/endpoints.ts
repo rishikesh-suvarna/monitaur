@@ -3,19 +3,29 @@ import type {
   ChannelResponse,
   ChannelsResponse,
   ChannelTestResponse,
+  CheckResponse,
+  CheckResultsRange,
+  CheckResultsResponse,
+  CheckRunResponse,
+  ChecksResponse,
   CreateChannelBody,
+  CreateCheckBody,
   CreateInviteBody,
   CreateInviteResponse,
+  CreateMaintenanceBody,
   CreateServerBody,
   CreateServerResponse,
   IncidentFilters,
   IncidentResponse,
   IncidentsResponse,
+  MaintenanceResponse,
+  MaintenanceWindowResponse,
   Member,
   MembersResponse,
   MeResponse,
   Org,
   OrgResponse,
+  ProcessesResponse,
   PublicStatusResponse,
   Role,
   RotateTokenResponse,
@@ -29,6 +39,8 @@ import type {
   ServerSummary,
   ServersResponse,
   UpdateChannelBody,
+  UpdateCheckBody,
+  UpdateMaintenanceBody,
   UpdateMeBody,
   UpdateOrgBody,
   UpdateServerBody,
@@ -98,6 +110,9 @@ export function createEndpoints(client: ApiClient) {
         request<undefined>(`/servers/${seg(serverId)}/pin`, { method: 'DELETE', orgId }),
       series: (orgId: number, serverId: number, range: SeriesRange, signal?: AbortSignal) =>
         request<SeriesResponse>(`/servers/${seg(serverId)}/series`, { orgId, query: { range }, signal }),
+      /** Section 6.2: the agent's latest process list, from memory. */
+      processes: (orgId: number, serverId: number, signal?: AbortSignal) =>
+        request<ProcessesResponse>(`/servers/${seg(serverId)}/processes`, { orgId, signal }),
     },
 
     incidents: {
@@ -129,6 +144,30 @@ export function createEndpoints(client: ApiClient) {
         request<undefined>(`/channels/${seg(channelId)}`, { method: 'DELETE', orgId }),
       test: (orgId: number, channelId: number) =>
         request<ChannelTestResponse>(`/channels/${seg(channelId)}/test`, { method: 'POST', orgId }),
+    },
+
+    /** Uptime checks (docs/platform-v2.md 6.3). */
+    checks: {
+      list: (orgId: number, signal?: AbortSignal) => request<ChecksResponse>('/checks', { orgId, signal }),
+      create: (orgId: number, body: CreateCheckBody) => request<CheckResponse>('/checks', { method: 'POST', orgId, body }),
+      update: (orgId: number, checkId: number, body: UpdateCheckBody) =>
+        request<CheckResponse>(`/checks/${seg(checkId)}`, { method: 'PATCH', orgId, body }),
+      remove: (orgId: number, checkId: number) => request<undefined>(`/checks/${seg(checkId)}`, { method: 'DELETE', orgId }),
+      run: (orgId: number, checkId: number) =>
+        request<CheckRunResponse>(`/checks/${seg(checkId)}/run`, { method: 'POST', orgId }),
+      results: (orgId: number, checkId: number, range: CheckResultsRange, signal?: AbortSignal) =>
+        request<CheckResultsResponse>(`/checks/${seg(checkId)}/results`, { orgId, query: { range }, signal }),
+    },
+
+    /** Maintenance windows (docs/platform-v2.md 6.4). */
+    maintenance: {
+      list: (orgId: number, signal?: AbortSignal) => request<MaintenanceResponse>('/maintenance', { orgId, signal }),
+      create: (orgId: number, body: CreateMaintenanceBody) =>
+        request<MaintenanceWindowResponse>('/maintenance', { method: 'POST', orgId, body }),
+      update: (orgId: number, windowId: number, body: UpdateMaintenanceBody) =>
+        request<MaintenanceWindowResponse>(`/maintenance/${seg(windowId)}`, { method: 'PATCH', orgId, body }),
+      remove: (orgId: number, windowId: number) =>
+        request<undefined>(`/maintenance/${seg(windowId)}`, { method: 'DELETE', orgId }),
     },
 
     /** Opens the SSE stream (fetch, so the Authorization header can be sent). */

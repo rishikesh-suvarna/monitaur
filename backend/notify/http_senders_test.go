@@ -254,7 +254,7 @@ func TestWebhookSenderSignsBody(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	keys := slices.Sorted(maps.Keys(raw))
-	wantKeys := []string{"dashboard_url", "event", "incident_id", "metric", "org_id", "resolved_at", "rule", "sent_at", "server", "severity", "started_at", "threshold", "unit", "value"}
+	wantKeys := []string{"dashboard_url", "event", "incident_id", "metric", "org_id", "resolved_at", "rule", "sent_at", "server", "severity", "source", "started_at", "threshold", "unit", "value"}
 	if !slices.Equal(keys, wantKeys) {
 		t.Fatalf("keys = %v, want %v", keys, wantKeys)
 	}
@@ -262,7 +262,7 @@ func TestWebhookSenderSignsBody(t *testing.T) {
 	if err := json.Unmarshal(r.body, &p); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if p.Event != "fired" || p.IncidentID != 42 || p.OrgID != 1 || p.Server != "db-1" || p.Rule != "Disk critical" ||
+	if p.Event != "fired" || p.IncidentID != 42 || p.OrgID != 1 || p.Source != SourceServer || p.Server != "db-1" || p.Rule != "Disk critical" ||
 		p.Metric != "disk" || p.Severity != "critical" || p.Value != 94.2 || p.Threshold != 90 || p.Unit != "%" ||
 		p.DashboardURL != "https://app.example.com/incidents/42" {
 		t.Errorf("payload = %+v", p)
@@ -349,5 +349,34 @@ func TestSendersRejectWrongChannelType(t *testing.T) {
 		if err := s.Send(context.Background(), ch, firedMessage("db-1")); err == nil {
 			t.Errorf("%s sender accepted an email channel", name)
 		}
+	}
+}
+
+func TestWebhookPayloadSource(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"server", SourceServer, SourceServer},
+		{"check", SourceCheck, SourceCheck},
+		{"unset means server", "", SourceServer},
+		{"unknown means server", "other", SourceServer},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, reqs := receiver(t, http.StatusOK, "")
+			ch := Channel{Type: Webhook, Name: "hook", Config: ChannelConfig{WebhookURL: srv.URL}}
+			msg := firedMessage("api health")
+			msg.Source = tt.in
+			if err := NewWebhookSender(srv.Client()).Send(context.Background(), ch, msg); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			var p webhookPayload
+			if err := json.Unmarshal(receive(t, reqs).body, &p); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if p.Source != tt.want {
+				t.Errorf("source = %q, want %q", p.Source, tt.want)
+			}
+		})
 	}
 }

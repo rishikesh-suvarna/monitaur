@@ -2,12 +2,22 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { api } from '../api';
-import { bumpOpenIncidents, openIncidentDelta, patchServerDetail, patchServersList } from '../api/cachePatches';
+import {
+  bumpCheckOpenIncidents,
+  bumpOpenIncidents,
+  openIncidentDelta,
+  patchChecksList,
+  patchServerDetail,
+  patchServersList,
+} from '../api/cachePatches';
 import { isApiError } from '../api/errors';
 import { queryKeys } from '../api/queryKeys';
 import { createSseParser, type SseMessage } from '../api/sse';
 import { backoffDelay } from '../lib/backoff';
+import { incidentCheckId } from '../lib/incidents';
 import type {
+  ChecksResponse,
+  ChecksStreamEvent,
   IncidentStreamEvent,
   ServerDetailResponse,
   ServersResponse,
@@ -53,6 +63,17 @@ function applyServersEvent(queryClient: QueryClient, orgId: number, payload: Ser
   }
 }
 
+/** `event: checks` (docs/platform-v2.md 6.3): live status of the org's uptime checks. */
+function applyChecksEvent(queryClient: QueryClient, orgId: number, payload: ChecksStreamEvent): void {
+  const listKey = queryKeys.checksList(orgId);
+  const list = queryClient.getQueryData<ChecksResponse>(listKey);
+  if (!list) return;
+  const { next, unknownIds } = patchChecksList(list, payload.checks);
+  if (next !== list) queryClient.setQueryData(listKey, next);
+  // A check we have never seen was created elsewhere: fetch the full row.
+  if (unknownIds.length > 0) void queryClient.invalidateQueries({ queryKey: listKey });
+}
+
 /** `{action:'refresh'}`: rule or server changes resolved incidents in bulk (docs/platform-v2.md section 4). */
 interface IncidentRefreshEvent {
   action: 'refresh';
@@ -72,9 +93,17 @@ function applyIncidentEvent(queryClient: QueryClient, orgId: number, event: Inci
   const payload = event;
   const previous = findCachedIncident(queryClient, orgId, payload.incident.id);
   writeIncidentToCaches(queryClient, orgId, payload.incident);
-  const listKey = queryKeys.serversList(orgId);
-  const list = queryClient.getQueryData<ServersResponse>(listKey);
-  if (list) queryClient.setQueryData(listKey, bumpOpenIncidents(list, payload.incident.server_id, openIncidentDelta(payload, previous)));
+  const delta = openIncidentDelta(payload, previous);
+  const checkId = incidentCheckId(payload.incident);
+  if (checkId !== null) {
+    const checksKey = queryKeys.checksList(orgId);
+    const checks = queryClient.getQueryData<ChecksResponse>(checksKey);
+    if (checks) queryClient.setQueryData(checksKey, bumpCheckOpenIncidents(checks, checkId, delta));
+  } else if (payload.incident.server_id !== null) {
+    const listKey = queryKeys.serversList(orgId);
+    const list = queryClient.getQueryData<ServersResponse>(listKey);
+    if (list) queryClient.setQueryData(listKey, bumpOpenIncidents(list, payload.incident.server_id, delta));
+  }
   // Patched in place; mark stale so the next mount refetches exact counts.
   void queryClient.invalidateQueries({ queryKey: queryKeys.incidentsAll(orgId), refetchType: 'none' });
 }
@@ -95,8 +124,8 @@ function sleep(ms: number, signal: AbortSignal, wake: EventTarget, wakeEvent: st
 
 /**
  * Keeps one SSE connection to GET /stream for the org (fetch-based, so it can
- * send the Authorization header) and patches the servers and incidents caches
- * from `servers` and `incident` events. Reconnects with exponential backoff,
+ * send the Authorization header) and patches the servers, checks and incidents
+ * caches from `servers`, `checks` and `incident` events. Reconnects with exponential backoff,
  * immediately when the browser comes back online. Mount it once: the app does
  * so in <LiveStreamProvider>; read its state with useLiveStatus().
  */
@@ -116,6 +145,8 @@ export function useLiveStream(orgId: number, enabled = true): LiveStreamStatus {
         if (message.event === 'servers') {
           applyServersEvent(queryClient, orgId, JSON.parse(message.data) as ServersStreamEvent);
           setStatus((current) => ({ ...current, lastServersAt: Date.now() }));
+        } else if (message.event === 'checks') {
+          applyChecksEvent(queryClient, orgId, JSON.parse(message.data) as ChecksStreamEvent);
         } else if (message.event === 'incident') {
           applyIncidentEvent(queryClient, orgId, JSON.parse(message.data) as IncidentEventPayload);
         }
@@ -165,6 +196,7 @@ export function useLiveStream(orgId: number, enabled = true): LiveStreamStatus {
             if (connectedBefore) {
               void queryClient.invalidateQueries({ queryKey: queryKeys.serversList(orgId) });
               void queryClient.invalidateQueries({ queryKey: queryKeys.incidentsAll(orgId) });
+              void queryClient.invalidateQueries({ queryKey: queryKeys.checksList(orgId) });
             }
             connectedBefore = true;
             failures = 0;

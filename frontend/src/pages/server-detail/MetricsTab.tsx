@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import type { SeriesField, SeriesRange, SeriesResponse, ServerSummary } from '../../api/types';
+import type { SeriesRange, SeriesResponse, ServerSummary } from '../../api/types';
 import { Card } from '../../components/Card';
 import { EmptyState } from '../../components/EmptyState';
 import { ErrorState } from '../../components/ErrorState';
@@ -18,21 +18,28 @@ import { oneOf, STORAGE_KEYS } from '../../lib/storage';
 import { AlertHistory } from './AlertHistory';
 import {
   buildChartSpecs,
+  compactUnitHint,
   findGaps,
   formatGap,
   formatHoverTime,
   formatValue,
   latestRowIndex,
+  loadAverages,
+  maxDiskRate,
   maxRate,
+  partitionSpecs,
   pickRateUnit,
   rangeNote,
   toChartRows,
   unreportedFields,
   valueSeverity,
+  valueSuffix,
   type ChartRow,
   type ChartSpec,
   type TimeSpan,
 } from './chartData';
+import { hasEntries } from './hostModel';
+import { FilesystemsCard, InterfacesCard } from './HostTables';
 import { createHoverStore, useHoverValue, type HoverStore } from './hoverStore';
 import { MetricChart } from './MetricChart';
 import { OfflineBanner } from './OfflineBanner';
@@ -48,38 +55,38 @@ const MOBILE_HEIGHT = 110;
 /** Empty newest steps up to this many are the bucket in progress, not a gap. */
 const TRAILING_GAP_MIN_STEPS = 3;
 const GAPS_IN_NOTE = 2;
+const SKELETON_CHARTS = 4;
 
 const SWATCH: Record<'in' | 'out', string> = { in: 'bg-series-1', out: 'bg-series-2' };
 const SEVERITY_TEXT = { critical: 'text-crit', warning: 'text-warn' } as const;
 
 interface ChartModel {
   rows: ChartRow[];
+  /** Charts to draw. */
   specs: ChartSpec[];
+  /** Charts the agent does not report in this range, folded into one note. */
+  hidden: ChartSpec[];
   domain: readonly [number, number];
   gaps: TimeSpan[];
   empty: boolean;
-  unreported: SeriesField[];
   range: SeriesRange;
 }
 
 function buildModel(data: SeriesResponse, server: ServerSummary, offline: boolean): ChartModel {
   const rate = pickRateUnit(maxRate(data));
-  const rows = toChartRows(data.points, rate);
+  const diskRate = pickRateUnit(maxDiskRate(data));
+  const rows = toChartRows(data.points, rate, diskRate);
   const from = toTime(data.from) ?? rows[0]?.ts ?? 0;
   const to = toTime(data.to) ?? rows[rows.length - 1]?.ts ?? from;
   const report = findGaps(rows, to);
   const gaps = [...report.gaps];
   // An online server with a run of empty newest steps has a real gap at the end; offline, the hatch shows it instead.
   if (!offline && report.trailing && report.trailingSteps >= TRAILING_GAP_MIN_STEPS) gaps.push(report.trailing);
-  return {
-    rows,
-    specs: buildChartSpecs({ rows, rate, thresholds: data.thresholds, latest: server.latest }),
-    domain: [from, to],
-    gaps,
-    empty: report.empty,
-    unreported: unreportedFields(rows),
-    range: data.range,
-  };
+  const { shown, hidden } = partitionSpecs(
+    buildChartSpecs({ rows, rate, diskRate, thresholds: data.thresholds, latest: server.latest }),
+    unreportedFields(rows),
+  );
+  return { rows, specs: shown, hidden, domain: [from, to], gaps, empty: report.empty, range: data.range };
 }
 
 function gapNote(gaps: readonly TimeSpan[], range: SeriesRange): string | null {
@@ -97,8 +104,13 @@ function Readout({ model, hover }: { model: ChartModel; hover: HoverStore<ChartR
     spec.series.map((series) => {
       const value = row ? row[series.field] : null;
       const severity = valueSeverity(value, series.field, spec.thresholds);
-      const unit = spec.kind === 'percent' ? '%' : ` ${spec.unitHint}`;
-      return { key: series.field, label: series.label, tone: series.tone, text: value === null ? EMPTY_VALUE : `${formatValue(value, spec.kind)}${unit}`, severity };
+      return {
+        key: series.field,
+        label: series.label,
+        tone: series.tone,
+        text: value === null ? EMPTY_VALUE : `${formatValue(value, spec.kind)}${valueSuffix(spec)}`,
+        severity,
+      };
     }),
   );
   return (
@@ -130,11 +142,15 @@ function HeaderValue({ spec, model, hover }: { spec: ChartSpec; model: ChartMode
   return <span className={cn('num text-[12px] font-semibold', severity ? SEVERITY_TEXT[severity] : 'text-ink')}>{text}</span>;
 }
 
-function NotReported({ spec, agentVersion }: { spec: ChartSpec; agentVersion: string }) {
+/** One line for every chart the agent does not send, instead of empty charts. */
+function NotReported({ specs, agentVersion, className }: { specs: readonly ChartSpec[]; agentVersion: string; className?: string }) {
+  if (specs.length === 0) return null;
   return (
-    <div className="flex items-center gap-2.5 rounded border border-dashed border-line-strong px-3 py-2.5 text-[13px]">
-      <span className="cap flex-none">{spec.title}</span>
-      <span className="flex-1 text-ink-muted">Not reported by agent {agentVersionLabel(agentVersion)}. Re-run the install command to update it.</span>
+    <div className={cn('flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded border border-dashed border-line-strong px-3 py-2.5 text-[13px]', className)}>
+      <span className="cap flex-none">{specs.map((spec) => spec.title).join(' · ')}</span>
+      <span className="min-w-0 flex-1 text-ink-muted">
+        Not reported by agent {agentVersionLabel(agentVersion)}. Re-run the install command to update it.
+      </span>
     </div>
   );
 }
@@ -153,6 +169,15 @@ function Legend({ spec }: { spec: ChartSpec }) {
   );
 }
 
+/** Beside a chart title: the legend, or for load the live 5 and 15 min averages. */
+function ChartAside({ spec, server }: { spec: ChartSpec; server: ServerSummary }) {
+  if (spec.key === 'load') {
+    const averages = loadAverages(server.latest);
+    return averages === null ? null : <span className="num text-[12px] text-ink-muted">{averages}</span>;
+  }
+  return <Legend spec={spec} />;
+}
+
 interface ChartsProps {
   model: ChartModel;
   server: ServerSummary;
@@ -162,8 +187,9 @@ interface ChartsProps {
   rangeLabel: string;
 }
 
-function isUnreported(spec: ChartSpec, unreported: readonly SeriesField[]): boolean {
-  return spec.series.every((series) => unreported.includes(series.field));
+function chartLabel(spec: ChartSpec, rangeLabel: string): string {
+  const lines = [...spec.thresholds.map((line) => line.label), ...spec.references.map((line) => `a ${line.label} reference`)];
+  return `${spec.title} over the ${rangeLabel}${lines.length > 0 ? `, with ${lines.join(' and ')} lines` : ''}`;
 }
 
 function Charts({ model, server, layout, desktop, hover, rangeLabel }: ChartsProps) {
@@ -171,70 +197,77 @@ function Charts({ model, server, layout, desktop, hover, rangeLabel }: ChartsPro
   const offlineSince = offline ? (toTime(server.last_seen) ?? model.domain[0]) : null;
   const syncId = `server-${server.id}`;
   const height = !desktop ? MOBILE_HEIGHT : layout === 'grid' ? GRID_HEIGHT : STACK_HEIGHT;
+  const grid = layout === 'grid';
 
-  const chart = (spec: ChartSpec, index: number) =>
-    isUnreported(spec, model.unreported) ? (
-      <NotReported spec={spec} agentVersion={server.agent_version} />
-    ) : (
-      <MetricChart
-        spec={spec}
-        rows={model.rows}
-        range={model.range}
-        domain={model.domain}
-        gaps={model.gaps}
-        offlineSince={offlineSince}
-        offlineLabel={index === 0}
-        syncId={syncId}
-        height={height}
-        compact={!desktop}
-        hover={hover}
-        label={`${spec.title} over the ${rangeLabel}${spec.thresholds.length > 0 ? `, with ${spec.thresholds.map((line) => line.label).join(' and ')} lines` : ''}`}
-      />
-    );
+  const chart = (spec: ChartSpec, index: number) => (
+    <MetricChart
+      spec={spec}
+      rows={model.rows}
+      range={model.range}
+      domain={model.domain}
+      gaps={model.gaps}
+      offlineSince={offlineSince}
+      offlineLabel={index === 0}
+      syncId={syncId}
+      height={height}
+      compact={!desktop}
+      hover={hover}
+      label={chartLabel(spec, rangeLabel)}
+    />
+  );
 
   if (!desktop) {
     return (
       <>
-        {model.specs.map((spec, index) =>
-          isUnreported(spec, model.unreported) ? (
-            <NotReported key={spec.key} spec={spec} agentVersion={server.agent_version} />
-          ) : (
-            <Card as="section" key={spec.key} aria-label={spec.title} className="flex flex-col gap-1.5 px-3 pb-2 pt-3">
-              <div className="flex items-baseline gap-2">
-                <h2 className="m-0 text-[13px] font-semibold">{spec.title}</h2>
-                <span className="text-[12px] text-ink-faint">{spec.kind === 'rate' ? `${spec.unitHint} in / out` : '%'}</span>
-                <span className="flex-1" />
-                <HeaderValue spec={spec} model={model} hover={hover} />
-              </div>
-              {chart(spec, index)}
-            </Card>
-          ),
-        )}
-        <span className="text-center text-[12px] text-ink-faint">Tap and drag a chart to scrub; all four follow.</span>
+        {model.specs.map((spec, index) => (
+          <Card as="section" key={spec.key} aria-label={spec.title} className="flex flex-col gap-1.5 px-3 pb-2 pt-3">
+            <div className="flex items-baseline gap-2">
+              <h2 className="m-0 text-[13px] font-semibold">{spec.title}</h2>
+              <span className="text-[12px] text-ink-faint">{compactUnitHint(spec)}</span>
+              <span className="flex-1" />
+              <HeaderValue spec={spec} model={model} hover={hover} />
+            </div>
+            {chart(spec, index)}
+          </Card>
+        ))}
+        <NotReported specs={model.hidden} agentVersion={server.agent_version} />
+        {model.specs.length > 1 && <span className="text-center text-[12px] text-ink-faint">Tap and drag a chart to scrub; the others follow.</span>}
       </>
     );
   }
 
+  // Small multiples pair related charts; an odd one out spans the last row instead of leaving a hole.
+  const oddLast = grid && model.specs.length % 2 === 1;
   return (
-    <div className={cn('grid gap-px bg-line', layout === 'grid' ? 'grid-cols-2' : 'grid-cols-1')}>
-      {model.specs.map((spec, index) => (
-        <div key={spec.key} className="flex min-w-0 flex-col gap-1.5 bg-surface-1 px-4 pb-2.5 pt-3.5">
-          <div className="flex items-baseline gap-2">
-            <h3 className="m-0 text-[13px] font-semibold">{spec.title}</h3>
-            <span className="text-[12px] text-ink-faint">{spec.unitHint}</span>
-            <span className="flex-1" />
-            {!isUnreported(spec, model.unreported) && <Legend spec={spec} />}
+    <>
+      <div className={cn('grid gap-px bg-line', grid ? 'grid-cols-2' : 'grid-cols-1')}>
+        {model.specs.map((spec, index) => (
+          <div
+            key={spec.key}
+            className={cn('flex min-w-0 flex-col gap-1.5 bg-surface-1 px-4 pb-2.5 pt-3.5', oddLast && index === model.specs.length - 1 && 'col-span-2')}
+          >
+            <div className="flex items-baseline gap-2">
+              <h3 className="m-0 text-[13px] font-semibold">{spec.title}</h3>
+              <span className="text-[12px] text-ink-faint">{spec.unitHint}</span>
+              <span className="flex-1" />
+              <ChartAside spec={spec} server={server} />
+            </div>
+            {chart(spec, index)}
           </div>
-          {chart(spec, index)}
+        ))}
+      </div>
+      {model.hidden.length > 0 && (
+        <div className="border-t border-line p-3">
+          <NotReported specs={model.hidden} agentVersion={server.agent_version} />
         </div>
-      ))}
-    </div>
+      )}
+    </>
   );
 }
 
 function ChartsSkeleton({ desktop, layout }: { desktop: boolean; layout: ChartLayout }) {
   const height = !desktop ? MOBILE_HEIGHT : layout === 'grid' ? GRID_HEIGHT : STACK_HEIGHT;
-  const cells = Array.from({ length: 4 }, (_, index) => (
+  const cells = Array.from({ length: SKELETON_CHARTS }, (_, index) => (
     <div key={index} className="flex flex-col gap-2.5 bg-surface-1 px-4 pb-3 pt-3.5">
       <Skeleton className="h-3 w-20" />
       <Skeleton style={{ height }} />
@@ -254,7 +287,8 @@ export interface MetricsTabProps {
 
 /**
  * The Metrics tab: range picker (live to 30 d), stacked or small-multiple
- * layout, the stat cards, the synced charts and the recent alert history.
+ * layout, the stat cards, the synced charts, the filesystems and interfaces
+ * cards and the recent alert history.
  */
 export function MetricsTab({ server, desktop }: MetricsTabProps) {
   const [params, setParams] = useSearchParams();
@@ -263,17 +297,19 @@ export function MetricsTab({ server, desktop }: MetricsTabProps) {
   const series = useServerSeries(server.id, range);
   const hover = useMemo(() => createHoverStore<ChartRow>(), []);
   const offline = server.status === 'offline';
+  const latest = server.latest;
 
   const data = series.data;
   // Rebuilt only when the series (or the agent totals in its labels) change, not on every live tick.
-  const totalsKey = `${server.latest?.cpu_cores ?? 0}:${server.latest?.mem_total ?? 0}:${server.latest?.disk_total ?? 0}`;
+  const totalsKey = `${latest?.cpu_cores ?? 0}:${latest?.mem_total ?? 0}:${latest?.disk_total ?? 0}:${latest?.swap_total ?? 0}`;
   const model = useMemo(
     () => (data ? buildModel(data, server, offline) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data, offline, totalsKey],
   );
-  const rate = pickRateUnit(data ? maxRate(data) : Math.max(server.latest?.net_in ?? 0, server.latest?.net_out ?? 0));
-  const cards = buildStatCards(server, data?.stats, rate);
+  const rate = pickRateUnit(data ? maxRate(data) : Math.max(latest?.net_in ?? 0, latest?.net_out ?? 0));
+  const diskRate = pickRateUnit(data ? maxDiskRate(data) : Math.max(latest?.disk_read ?? 0, latest?.disk_write ?? 0));
+  const cards = buildStatCards(server, data?.stats, rate, diskRate);
   const note = data ? rangeNote(data) : '';
   const rangeLabel = note === '' ? 'selected range' : note.split(' · ')[0] ?? 'selected range';
   const gapText = model ? gapNote(model.gaps, model.range) : null;
@@ -324,6 +360,11 @@ export function MetricsTab({ server, desktop }: MetricsTabProps) {
     );
   }
 
+  const filesystems = <FilesystemsCard server={server} desktop={desktop} />;
+  const interfaces = <InterfacesCard server={server} desktop={desktop} />;
+  const hasMounts = hasEntries(latest?.mounts);
+  const hasInterfaces = hasEntries(latest?.interfaces);
+
   return (
     <div className={cn('flex flex-col', desktop ? 'gap-5' : 'gap-3.5')}>
       {offline && <OfflineBanner server={server} />}
@@ -349,20 +390,23 @@ export function MetricsTab({ server, desktop }: MetricsTabProps) {
       </div>
 
       <div className={cn('grid gap-3', desktop ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2 gap-2')}>
-        {cards.map((card) => (
-          <MetricCard
-            key={card.key}
-            label={desktop ? card.label : card.shortLabel}
-            value={card.value}
-            unit={card.unit}
-            {...(card.alert ? { alert: card.alert } : {})}
-            {...(desktop && card.stats ? { stats: card.stats } : {})}
-            statsVariant="chips"
-            density={desktop ? 'default' : 'compact'}
-            {...(!desktop && card.footnote !== '' ? { footnote: card.footnote } : {})}
-            stale={offline}
-          />
-        ))}
+        {cards.map((card) => {
+          const footnote = desktop ? card.detail : card.footnote;
+          return (
+            <MetricCard
+              key={card.key}
+              label={desktop ? card.label : card.shortLabel}
+              value={card.value}
+              unit={card.unit}
+              {...(card.alert ? { alert: card.alert } : {})}
+              {...(desktop && card.stats ? { stats: card.stats } : {})}
+              statsVariant="chips"
+              density={desktop ? 'default' : 'compact'}
+              {...(footnote !== '' ? { footnote } : {})}
+              stale={offline}
+            />
+          );
+        })}
       </div>
 
       {desktop ? (
@@ -376,6 +420,18 @@ export function MetricsTab({ server, desktop }: MetricsTabProps) {
           {model && !model.empty ? charts : <Card className="overflow-hidden">{charts}</Card>}
           {gapText && <p className="num m-0 text-[12px] text-ink-muted">{gapText}</p>}
         </div>
+      )}
+
+      {desktop && hasMounts && hasInterfaces ? (
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          {filesystems}
+          {interfaces}
+        </div>
+      ) : (
+        <>
+          {filesystems}
+          {interfaces}
+        </>
       )}
 
       <AlertHistory serverId={server.id} mode="recent" compact={!desktop} />

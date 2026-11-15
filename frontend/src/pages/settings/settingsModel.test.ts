@@ -9,6 +9,7 @@ import {
   retentionText,
   slugError,
   statusPageDirty,
+  statusPageForm,
   statusPagePatch,
   statusPageUrl,
   type StatusPageForm,
@@ -33,13 +34,20 @@ describe('status page address', () => {
   });
 
   it('sends the whole status page config and the slug only when changed', () => {
-    const saved: StatusPageForm = { enabled: false, title: 'Acme', slug: 'acme', serverIds: [2, 1] };
+    const saved: StatusPageForm = { enabled: false, title: 'Acme', slug: 'acme', serverIds: [2, 1], checkIds: [7] };
     expect(statusPageDirty(saved, { ...saved, serverIds: [1, 2] })).toBe(false);
     expect(statusPageDirty(saved, { ...saved, title: ' Acme ' })).toBe(false);
+    expect(statusPageDirty(saved, { ...saved, checkIds: [7, 8] })).toBe(true);
     expect(statusPagePatch(saved, { ...saved, enabled: true, title: ' Acme status ' })).toEqual({
-      status_page: { enabled: true, title: 'Acme status', server_ids: [2, 1] },
+      status_page: { enabled: true, title: 'Acme status', server_ids: [2, 1], check_ids: [7] },
     });
     expect(statusPagePatch(saved, { ...saved, slug: 'acme-status' }).slug).toBe('acme-status');
+  });
+
+  it('reads check ids, and none from a backend that predates uptime checks', () => {
+    const page = { enabled: true, slug: 'acme', title: 'Acme', server_ids: [1] };
+    expect(statusPageForm({ slug: 'acme', status_page: { ...page, check_ids: [4, 5] } }).checkIds).toEqual([4, 5]);
+    expect(statusPageForm({ slug: 'acme', status_page: page }).checkIds).toEqual([]);
   });
 });
 

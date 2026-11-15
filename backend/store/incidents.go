@@ -12,8 +12,8 @@ import (
 type Incident struct {
 	ID               int64      `json:"id"`
 	OrgID            int64      `json:"-"`
-	ServerID         int64      `json:"server_id"`
-	ServerName       string     `json:"server_name"`
+	ServerID         *int64     `json:"server_id"`   // nil for check incidents
+	ServerName       string     `json:"server_name"` // the check name for check incidents
 	RuleID           *int64     `json:"rule_id"`
 	RuleName         string     `json:"rule_name"`
 	Metric           string     `json:"metric"`
@@ -29,6 +29,9 @@ type Incident struct {
 	AckedBy          *string    `json:"acked_by"`
 	LastNotifiedAt   *time.Time `json:"last_notified_at"`
 	NotifiedChannels []string   `json:"notified_channels"`
+	Silenced         bool       `json:"silenced"` // opened during a maintenance window
+	CheckID          *int64     `json:"check_id"`
+	CheckName        *string    `json:"check_name"`
 }
 
 func (i Incident) State() string {
@@ -42,17 +45,21 @@ func (i Incident) State() string {
 	}
 }
 
-const incidentColumns = `i.id, i.org_id, i.server_id, s.name, i.rule_id, i.rule_name, i.metric, i.severity, i.threshold,
+const incidentColumns = `i.id, i.org_id, i.server_id, COALESCE(s.name, c.name, ''), i.rule_id, i.rule_name, i.metric, i.severity, i.threshold,
 	i.peak, i.last_value, i.samples_over, i.started_at, i.resolved_at, i.resolved_how, i.acked_at,
-	NULLIF(COALESCE(NULLIF(u.display_name, ''), u.email), ''), i.last_notified_at, i.notified_channels`
+	NULLIF(COALESCE(NULLIF(u.display_name, ''), u.email), ''), i.last_notified_at, i.notified_channels, i.check_id, c.name,
+	i.silenced`
 
-const incidentFrom = ` FROM incidents i JOIN servers s ON s.id = i.server_id LEFT JOIN users u ON u.id = i.acked_by `
+// An incident belongs to a server or (F7) to a check, hence both outer joins.
+const incidentFrom = ` FROM incidents i LEFT JOIN servers s ON s.id = i.server_id LEFT JOIN checks c ON c.id = i.check_id
+	LEFT JOIN users u ON u.id = i.acked_by `
 
 func scanIncident(row pgx.Row) (Incident, error) {
 	var i Incident
 	err := row.Scan(&i.ID, &i.OrgID, &i.ServerID, &i.ServerName, &i.RuleID, &i.RuleName, &i.Metric, &i.Severity,
 		&i.Threshold, &i.Peak, &i.LastValue, &i.SamplesOver, &i.StartedAt, &i.ResolvedAt, &i.ResolvedHow,
-		&i.AckedAt, &i.AckedBy, &i.LastNotifiedAt, &i.NotifiedChannels)
+		&i.AckedAt, &i.AckedBy, &i.LastNotifiedAt, &i.NotifiedChannels, &i.CheckID, &i.CheckName,
+		&i.Silenced)
 	if i.NotifiedChannels == nil {
 		i.NotifiedChannels = []string{}
 	}
@@ -122,9 +129,12 @@ WHERE id = $1`, id, channelNames, at)
 	return err
 }
 
-// LoadOpenIncidents restores the alerting engine after a restart.
+// LoadOpenIncidents restores the alerting engine after a restart. Check
+// incidents are left out: the engine would close them as orphans
+// (LoadOpenCheckIncidents restores the check scheduler instead).
 func (s *Store) LoadOpenIncidents(ctx context.Context) ([]Incident, error) {
-	return collectIncidents(s.pool.Query(ctx, `SELECT `+incidentColumns+incidentFrom+`WHERE i.resolved_at IS NULL ORDER BY i.id`))
+	return collectIncidents(s.pool.Query(ctx, `SELECT `+incidentColumns+incidentFrom+
+		`WHERE i.resolved_at IS NULL AND i.server_id IS NOT NULL ORDER BY i.id`))
 }
 
 func (s *Store) GetIncident(ctx context.Context, orgID, id int64) (Incident, error) {
@@ -153,6 +163,7 @@ type IncidentFilter struct {
 	Severity string
 	Metric   string
 	ServerID int64
+	CheckID  int64
 	BeforeID int64
 	Limit    int
 }
@@ -192,6 +203,9 @@ func (s *Store) ListIncidents(ctx context.Context, orgID int64, f IncidentFilter
 	if f.ServerID > 0 {
 		add("i.server_id = $%d", f.ServerID)
 	}
+	if f.CheckID > 0 {
+		add("i.check_id = $%d", f.CheckID)
+	}
 	if f.BeforeID > 0 {
 		add("i.id < $%d", f.BeforeID)
 	}
@@ -218,11 +232,18 @@ FROM incidents WHERE org_id = $1`, orgID).Scan(&c.Open, &c.Acked, &c.Resolved24h
 	return incidents, c, err
 }
 
-// IncidentsForServers feeds the public status page.
-func (s *Store) IncidentsForServers(ctx context.Context, orgID int64, serverIDs []int64, since time.Time, limit int) ([]Incident, error) {
+// IncidentsForServices feeds the public status page: incidents of the listed
+// servers and checks.
+func (s *Store) IncidentsForServices(ctx context.Context, orgID int64, serverIDs, checkIDs []int64, since time.Time, limit int) ([]Incident, error) {
+	if serverIDs == nil {
+		serverIDs = []int64{}
+	}
+	if checkIDs == nil {
+		checkIDs = []int64{}
+	}
 	return collectIncidents(s.pool.Query(ctx, `SELECT `+incidentColumns+incidentFrom+`
-WHERE i.org_id = $1 AND i.server_id = ANY($2) AND i.started_at >= $3
-ORDER BY i.started_at DESC LIMIT $4`, orgID, serverIDs, since, limit))
+WHERE i.org_id = $1 AND (i.server_id = ANY($2) OR i.check_id = ANY($3)) AND i.started_at >= $4
+ORDER BY i.started_at DESC LIMIT $5`, orgID, serverIDs, checkIDs, since, limit))
 }
 
 // ExportIncidents returns up to the last 90 days for GET /export.

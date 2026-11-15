@@ -1,8 +1,9 @@
+import { GlobeAltIcon, ServerIcon } from '@heroicons/react/24/outline';
 import { useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 
 import { hasErrorCode } from '../../api/errors';
-import type { PublicStatusResponse, PublicStatusService, ServerStatus } from '../../api/types';
+import type { PublicStatusResponse, ServerStatus } from '../../api/types';
 import { cardClasses } from '../../components/Card';
 import { Dino } from '../../components/Dino';
 import { ErrorState } from '../../components/ErrorState';
@@ -24,12 +25,15 @@ import {
   DAY_KIND_LABEL,
   formatUptime,
   incidentView,
+  normalizeService,
   pageHeading,
+  SERVICE_KIND_LABEL,
   shapeUptimeDays,
   STATUS_WORD,
   statusVerdict,
   uptimeSummary,
   type DayKind,
+  type StatusService,
 } from './statusModel';
 
 const LIGHT_SCHEME_QUERY = '(prefers-color-scheme: light)';
@@ -112,6 +116,9 @@ export default function PublicStatusPage() {
 function StatusContent({ data, refreshFailed }: { data: PublicStatusResponse; refreshFailed: boolean }) {
   const now = useNow();
   const heading = pageHeading(data.title);
+  // Servers and uptime checks (F7) share one list, in the order the page lists them.
+  const services = useMemo(() => data.services.map(normalizeService), [data.services]);
+  const mixed = services.some((service) => service.kind === 'check') && services.some((service) => service.kind === 'server');
   return (
     <>
       <header className="flex flex-wrap items-center gap-3.5">
@@ -131,7 +138,7 @@ function StatusContent({ data, refreshFailed }: { data: PublicStatusResponse; re
         <StatusBadge status={data.overall} text={STATUS_WORD[data.overall]} />
         <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-0.5">
           <h2 id="status-overall" className="m-0 text-[16px] font-semibold leading-6">
-            {statusVerdict(data.services)}
+            {statusVerdict(services)}
           </h2>
           <span className="num text-[12px] text-ink-muted" title={formatClock(data.updated_at)}>
             Updated {formatTimeOfDay(data.updated_at)} · refreshes every {REFRESH_SECONDS} s
@@ -157,10 +164,10 @@ function StatusContent({ data, refreshFailed }: { data: PublicStatusResponse; re
             ))}
           </div>
         </div>
-        {data.services.length === 0 ? (
+        {services.length === 0 ? (
           <p className="m-0 px-5 py-6 text-[13px] text-ink-muted">No services are listed on this page yet.</p>
         ) : (
-          data.services.map((service, index) => <ServiceUptime key={`${service.name}:${index}`} service={service} />)
+          services.map((service, index) => <ServiceUptime key={`${service.kind}:${service.name}:${index}`} service={service} showKind={mixed} />)
         )}
       </section>
 
@@ -190,14 +197,23 @@ function StatusContent({ data, refreshFailed }: { data: PublicStatusResponse; re
   );
 }
 
-function ServiceUptime({ service }: { service: PublicStatusService }) {
+function ServiceUptime({ service, showKind }: { service: StatusService; showKind: boolean }) {
   const desktop = useIsDesktop();
   const cells = useMemo(() => shapeUptimeDays(service.days), [service.days]);
+  const KindIcon = service.kind === 'check' ? GlobeAltIcon : ServerIcon;
   return (
     <div className="flex flex-col gap-2.5 border-b border-line px-5 py-4 last:border-b-0">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        <span className="min-w-0 flex-1 truncate font-semibold" title={service.name}>
-          {service.name}
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          {showKind && (
+            <span title={SERVICE_KIND_LABEL[service.kind]} className="inline-flex flex-none text-ink-faint">
+              <KindIcon className="h-4 w-4" strokeWidth={1.6} aria-hidden="true" />
+              <span className="sr-only">{SERVICE_KIND_LABEL[service.kind]}:</span>
+            </span>
+          )}
+          <span className="min-w-0 truncate font-semibold" title={service.name}>
+            {service.name}
+          </span>
         </span>
         <span className="num text-[13px] text-ink-muted">{formatUptime(service.uptime_pct)} uptime</span>
         <StatusBadge status={service.status} size="sm" text={STATUS_WORD[service.status]} />

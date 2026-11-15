@@ -16,12 +16,14 @@ import (
 	"backend/alerting"
 	"backend/api"
 	"backend/auth"
+	"backend/checks"
 	"backend/config"
 	"backend/directory"
 	"backend/ingest"
 	"backend/limits"
 	"backend/metrics"
 	"backend/notify"
+	"backend/processes"
 	"backend/secrets"
 	"backend/store"
 )
@@ -49,7 +51,9 @@ type App struct {
 	dir        *directory.Directory
 	auth       *auth.Service
 	metrics    *metrics.Store
+	processes  *processes.Store
 	engine     *alerting.Engine
+	checks     *checks.Scheduler
 	dispatcher *notify.Dispatcher
 	hub        *ingest.Hub
 	broker     *api.Broker
@@ -60,6 +64,15 @@ type App struct {
 	ctx           context.Context // app lifetime, for engine work triggered by ingest
 	seedMu        sync.Mutex
 	lastRetention time.Time
+
+	// Maintenance bookkeeping: which open incidents were announced to a
+	// channel, and which fired inside a window and still need announcing if
+	// they outlive it.
+	announceMu         sync.Mutex
+	announced          map[int64]bool
+	unannounced        map[int64]alerting.Event
+	unannouncedChecks  map[int64]checks.Event
+	lastCheckRetention time.Time
 }
 
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, verifier auth.Verifier) (*App, error) {
@@ -71,7 +84,8 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, log: log, ctx: ctx}
+	a := &App{cfg: cfg, log: log, ctx: ctx, announced: map[int64]bool{}, unannounced: map[int64]alerting.Event{},
+		unannouncedChecks: map[int64]checks.Event{}}
 	a.store = store.New(pool, box)
 	a.dir = directory.New(a.store)
 	if err := a.dir.Load(ctx); err != nil {
@@ -108,6 +122,23 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	if err := a.engine.Load(ctx, api.RulesToAlerting(a.dir.AllRules()), infos); err != nil {
 		return nil, fmt.Errorf("load alerting engine: %w", err)
 	}
+	// Incidents announced before a restart keep getting their "resolved".
+	for _, load := range []func(context.Context) ([]store.Incident, error){a.store.LoadOpenIncidents, a.store.LoadOpenCheckIncidents} {
+		open, err := load(ctx)
+		if err != nil {
+			continue
+		}
+		for _, inc := range open {
+			if len(inc.NotifiedChannels) > 0 {
+				a.announced[inc.ID] = true
+			}
+		}
+	}
+	a.checks = checks.NewScheduler(checks.Config{Workers: checkWorkers, AllowPrivate: cfg.Checks.AllowPrivateTargets},
+		checkStore{a.store}, checkNotifier{a}, log)
+	if err := a.checks.Load(ctx, api.ChecksToScheduler(a.dir.AllChecks())); err != nil {
+		return nil, fmt.Errorf("load uptime checks: %w", err)
+	}
 
 	mcfg := metrics.DefaultConfig()
 	mcfg.FlushInterval, mcfg.RawWindow, mcfg.RecentWindow, mcfg.JournalDir =
@@ -116,7 +147,9 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 		return nil, fmt.Errorf("init metrics store: %w", err)
 	}
 	a.metrics.OnFlush(a.housekeeping)
+	a.metrics.OnFlush(a.checksHousekeeping)
 
+	a.processes = processes.New()
 	a.hub = ingest.NewHub(a.dir, recorder{a}, a.limiter, cfg.Server.Origins(), log)
 	a.auth = auth.NewService(verifier, a.store, auth.Config{
 		DefaultPlan:     cfg.Limits.DefaultPlan,
@@ -127,8 +160,9 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger, pool *pgxpoo
 	}, log)
 
 	a.api = api.New(api.Deps{
-		Config: cfg, Store: a.store, Auth: a.auth, Dir: a.dir, Metrics: a.metrics, Engine: a.engine,
+		Config: cfg, Store: a.store, Auth: a.auth, Dir: a.dir, Metrics: a.metrics, Processes: a.processes, Engine: a.engine,
 		Dispatcher: a.dispatcher, Hub: a.hub, Broker: a.broker, Limiter: a.limiter, Budget: a.budget, Log: log,
+		Checks: a.checks, Silenced: a.silenced,
 	})
 	return a, nil
 }
@@ -149,7 +183,13 @@ func (a *App) Run(ctx context.Context) {
 		}
 	})
 	start(func() { a.dispatcher.Run(ctx) })
-	start(func() { a.every(ctx, engineTickEvery, func() { a.engine.Tick(ctx) }) })
+	start(func() { a.checks.Run(ctx) })
+	start(func() {
+		a.every(ctx, engineTickEvery, func() {
+			a.engine.Tick(ctx)
+			a.announceAfterMaintenance()
+		})
+	})
 	start(func() { a.every(ctx, sweepEvery, a.hub.SweepTokens) })
 	start(func() { a.every(ctx, limiterSweepEvery, a.limiter.Sweep) })
 	start(func() { a.seedUnseededOrgs(ctx) })
@@ -305,6 +345,12 @@ func (r recorder) Sample(serverID int64, s metrics.Sample, minInterval time.Dura
 	return nil
 }
 
+// Processes keeps the agent's latest top-processes list in memory only. It
+// is not a heartbeat: liveness comes from samples and the socket.
+func (r recorder) Processes(serverID int64, snap processes.Snapshot) {
+	r.a.processes.Put(serverID, snap)
+}
+
 func (r recorder) Connected(serverID int64, version string, at time.Time) {
 	r.a.dir.RecordConnect(serverID, version, at)
 	r.a.engine.Heartbeat(serverID, at)
@@ -362,9 +408,16 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 		alerting.EventFired: notify.KindFired, alerting.EventRenotify: notify.KindRenotify, alerting.EventResolved: notify.KindResolved,
 	}[ev.Kind]
 
+	// A maintenance window silences fired, renotify and resolved alike; the
+	// incident is still recorded and live clients still get the event.
+	silenced := a.silenced(ev.Server.OrgID, ev.Server.ID, 0, ev.At)
+	var channels []store.Channel
+	if !silenced {
+		channels = a.dir.OrgChannels(ev.Server.OrgID)
+	}
 	var targets []notify.Channel
 	var names []string
-	for _, c := range a.dir.OrgChannels(ev.Server.OrgID) {
+	for _, c := range channels {
 		if !c.Enabled || !containsID(ev.Rule.ChannelIDs, c.ID) {
 			continue
 		}
@@ -378,7 +431,7 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 	}
 
 	msg := notify.Message{
-		Kind: kind, OrgID: ev.Server.OrgID, IncidentID: ev.Incident.ID, ServerName: ev.Server.Name,
+		Kind: kind, OrgID: ev.Server.OrgID, IncidentID: ev.Incident.ID, Source: notify.SourceServer, ServerName: ev.Server.Name,
 		RuleName: ev.Rule.Name, Metric: string(ev.Rule.Metric), Severity: string(ev.Rule.Severity),
 		Value: ev.Incident.LastValue, Threshold: ev.Rule.Threshold, Unit: api.UnitFor(string(ev.Rule.Metric)),
 		StartedAt:    ev.Incident.StartedAt,
@@ -388,6 +441,25 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 		at := ev.At
 		msg.ResolvedAt, msg.Value = &at, ev.Incident.Peak
 	}
+	a.announceMu.Lock()
+	switch ev.Kind {
+	case alerting.EventFired, alerting.EventRenotify:
+		if silenced && ev.Kind == alerting.EventFired {
+			a.unannounced[ev.Incident.ID] = ev // announce if it outlives the window
+		} else if len(targets) > 0 {
+			a.announced[ev.Incident.ID] = true
+			delete(a.unannounced, ev.Incident.ID)
+		}
+	case alerting.EventResolved:
+		// Nobody was told it fired (silenced, or no channels), so a
+		// "resolved" message would be the first anyone hears of it.
+		if !a.announced[ev.Incident.ID] {
+			targets, names = nil, nil
+		}
+		delete(a.announced, ev.Incident.ID)
+		delete(a.unannounced, ev.Incident.ID)
+	}
+	a.announceMu.Unlock()
 	if len(targets) > 0 {
 		a.dispatcher.Dispatch(targets, msg)
 	}
@@ -400,11 +472,17 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 			}
 		}(ev.Incident.ID, ev.At)
 	}
+	if ev.Kind == alerting.EventFired && silenced {
+		a.markSilenced(ev.Incident.ID)
+	}
 
 	action := map[alerting.EventKind]string{alerting.EventFired: "opened", alerting.EventRenotify: "updated", alerting.EventResolved: "resolved"}[ev.Kind]
+	live := liveIncident(ev, names)
+	// Mirrors incidents.silenced, which is set when the incident opens.
+	live["silenced"] = a.silenced(ev.Server.OrgID, ev.Server.ID, 0, ev.Incident.StartedAt)
 	a.broker.Publish(ev.Server.OrgID, "incident", map[string]any{
 		"action":   action,
-		"incident": liveIncident(ev, names),
+		"incident": live,
 	})
 }
 
@@ -429,7 +507,7 @@ func liveIncident(ev alerting.Event, channels []string) map[string]any {
 		"threshold":  ev.Rule.Threshold, "peak": ev.Incident.Peak, "last_value": ev.Incident.LastValue,
 		"unit": api.UnitFor(string(ev.Rule.Metric)), "samples_over": ev.Incident.SamplesOver,
 		"started_at": ev.Incident.StartedAt, "resolved_at": resolvedAt, "acked_at": ev.Incident.AckedAt,
-		"notified_channels": channels,
+		"notified_channels": channels, "check_id": nil, "check_name": nil,
 	}
 }
 
@@ -454,4 +532,49 @@ func comparisonOf(r alerting.Rule) alerting.Comparison {
 		return alerting.Above
 	}
 	return r.Comparison
+}
+
+// announceAfterMaintenance sends the "fired" notification for incidents that
+// opened inside a maintenance window and are still open after it ended, so a
+// problem that outlives planned work is not silently dropped. Runs on the
+// engine tick; memory only.
+func (a *App) announceAfterMaintenance() {
+	now := time.Now()
+	a.announceMu.Lock()
+	var due []alerting.Event
+	for id, ev := range a.unannounced {
+		if !a.silenced(ev.Server.OrgID, ev.Server.ID, 0, now) {
+			due = append(due, ev)
+			delete(a.unannounced, id)
+		}
+	}
+	// Pending check incidents are still open: a resolve removes them.
+	var dueChecks []checks.Event
+	for id, ev := range a.unannouncedChecks {
+		if !a.silenced(ev.Check.OrgID, 0, ev.Check.ID, now) {
+			dueChecks = append(dueChecks, ev)
+			delete(a.unannouncedChecks, id)
+		}
+	}
+	a.announceMu.Unlock()
+
+	for _, ev := range dueChecks {
+		ev.At = now
+		checkNotifier{a}.Notify(a.ctx, ev)
+	}
+
+	for _, ev := range due {
+		open := false
+		for _, inc := range a.engine.Open(ev.Server.OrgID) {
+			if inc.ID == ev.Incident.ID {
+				ev.Incident, open = inc, true
+				break
+			}
+		}
+		if !open {
+			continue // resolved meanwhile
+		}
+		ev.At = now
+		(&notifier{app: a}).Notify(a.ctx, ev)
+	}
 }

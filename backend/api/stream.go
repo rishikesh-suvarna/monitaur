@@ -105,7 +105,17 @@ func (a *API) stream(c *gin.Context) {
 		if err != nil {
 			return false
 		}
-		return send([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventServers, data)))
+		if !send([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventServers, data))) {
+			return false
+		}
+		// Checks ride the same 3 s cadence, only for orgs that have any.
+		if a.Dir.CheckCount(p.OrgID) == 0 {
+			return true
+		}
+		if data, err = json.Marshal(gin.H{"checks": a.liveChecks(p.OrgID)}); err != nil {
+			return false
+		}
+		return send([]byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventChecks, data)))
 	}
 	if !snapshot() {
 		return

@@ -49,6 +49,10 @@ describe('toApiFilters', () => {
   it('maps types to the API metric, and unreachable to heartbeat', () => {
     expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'memory' })).toEqual({ state: 'open', metric: 'memory' });
     expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'unreachable' })).toEqual({ state: 'open', metric: 'heartbeat' });
+    expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'load' })).toEqual({ state: 'open', metric: 'load1' });
+    expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'swap' })).toEqual({ state: 'open', metric: 'swap' });
+    // Uptime covers four check metrics, so it is filtered locally.
+    expect(toApiFilters({ ...DEFAULT_FILTERS, type: 'uptime' })).toEqual({ state: 'open' });
   });
 
   it('leaves network to the client: the API filters one metric at a time', () => {
@@ -70,6 +74,13 @@ describe('matchesFilters', () => {
     expect(matchesFilters(netOut, network)).toBe(true);
     expect(matchesFilters(makeIncident({ id: 3, server_id: 2, metric: 'net_in' }), network)).toBe(true);
     expect(matchesFilters(makeIncident({ id: 4, server_id: 2, metric: 'cpu' }), network)).toBe(false);
+  });
+
+  it('treats uptime as every check metric', () => {
+    const uptime: AlertFilters = { ...DEFAULT_FILTERS, type: 'uptime' };
+    expect(matchesFilters(makeIncident({ id: 5, server_id: null, check_id: 1, metric: 'tls_expiry' }), uptime)).toBe(true);
+    expect(matchesFilters(makeIncident({ id: 6, server_id: null, check_id: 1, metric: 'tcp' }), uptime)).toBe(true);
+    expect(matchesFilters(netOut, uptime)).toBe(false);
   });
 
   it('checks state, severity and server', () => {

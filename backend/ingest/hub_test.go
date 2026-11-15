@@ -16,6 +16,7 @@ import (
 
 	"backend/limits"
 	"backend/metrics"
+	"backend/processes"
 	"backend/secrets"
 	"backend/store"
 )
@@ -49,9 +50,16 @@ func (d *fakeDir) revoke(token string) {
 type fakeRec struct {
 	mu           sync.Mutex
 	samples      []metrics.Sample
+	snapshots    []processes.Snapshot
 	connects     []string
 	disconnects  int
 	lastInterval time.Duration
+}
+
+func (r *fakeRec) Processes(_ int64, snap processes.Snapshot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshots = append(r.snapshots, snap)
 }
 
 func (r *fakeRec) Sample(_ int64, s metrics.Sample, min time.Duration) error {

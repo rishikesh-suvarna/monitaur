@@ -32,6 +32,8 @@ const RULE_METRIC_LABELS: Record<MetricKey, string> = {
   net_in: 'Network in',
   net_out: 'Network out',
   heartbeat: 'Unreachable',
+  load1: 'Load average',
+  swap: 'Swap',
 };
 
 /** "30 s", "1 min", "5 min", "1 h", "1 h 30 min". */
@@ -45,7 +47,10 @@ export function formatForDuration(seconds: number): string {
 }
 
 function ruleThreshold(rule: Pick<Rule, 'metric' | 'threshold'>): string {
-  return rule.metric === 'net_in' || rule.metric === 'net_out' ? formatRate(rule.threshold) : formatThreshold(rule.threshold, '%');
+  if (rule.metric === 'net_in' || rule.metric === 'net_out') return formatRate(rule.threshold);
+  // Load average is unitless, not a percentage.
+  if (rule.metric === 'load1') return String(rule.threshold);
+  return formatThreshold(rule.threshold, '%');
 }
 
 /**

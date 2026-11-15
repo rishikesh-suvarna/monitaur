@@ -1,5 +1,5 @@
 // Package directory is the in-memory copy of the control plane: orgs, plans,
-// servers (with token hashes), rules, channels and pins. It is loaded once at
+// servers (with token hashes), rules, channels, uptime checks and pins. It is loaded once at
 // startup and updated on every write, so agent connects and dashboard polls
 // never touch the database (PLAN.md 2.3.2 item 7). The backend is a single
 // process, so write-through is enough to stay consistent.
@@ -21,7 +21,9 @@ type Loader interface {
 	ListAllServers(ctx context.Context) ([]store.Server, error)
 	ListAllRules(ctx context.Context) ([]store.Rule, error)
 	ListAllChannels(ctx context.Context) ([]store.Channel, error)
+	ListAllChecks(ctx context.Context) ([]store.Check, error)
 	ListPins(ctx context.Context, userID int64) ([]int64, error)
+	ListAllMaintenanceWindows(ctx context.Context) ([]store.MaintenanceWindow, error)
 }
 
 type Directory struct {
@@ -36,8 +38,12 @@ type Directory struct {
 	byPrev   map[string]int64
 	rules    map[int64][]store.Rule    // by org
 	channels map[int64][]store.Channel // by org
+	checks   map[int64][]store.Check   // by org
 	pins     map[int64]map[int64]bool  // user -> server set, loaded lazily
 	touches  map[int64]store.ServerTouch
+	// Maintenance windows by org. Slices are replaced, never modified in
+	// place, so readers can scan them without copying.
+	maintenance map[int64][]store.MaintenanceWindow
 }
 
 func New(loader Loader) *Directory {
@@ -51,8 +57,11 @@ func New(loader Loader) *Directory {
 		byPrev:   map[string]int64{},
 		rules:    map[int64][]store.Rule{},
 		channels: map[int64][]store.Channel{},
+		checks:   map[int64][]store.Check{},
 		pins:     map[int64]map[int64]bool{},
 		touches:  map[int64]store.ServerTouch{},
+
+		maintenance: map[int64][]store.MaintenanceWindow{},
 	}
 }
 
@@ -78,6 +87,14 @@ func (d *Directory) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	windows, err := d.loader.ListAllMaintenanceWindows(ctx)
+	if err != nil {
+		return err
+	}
+	checks, err := d.loader.ListAllChecks(ctx)
+	if err != nil {
+		return err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, o := range orgs {
@@ -94,6 +111,12 @@ func (d *Directory) Load(ctx context.Context) error {
 	}
 	for _, c := range channels {
 		d.channels[c.OrgID] = append(d.channels[c.OrgID], c)
+	}
+	for _, w := range windows {
+		d.maintenance[w.OrgID] = append(d.maintenance[w.OrgID], w)
+	}
+	for _, c := range checks {
+		d.checks[c.OrgID] = append(d.checks[c.OrgID], c)
 	}
 	return nil
 }
@@ -120,6 +143,8 @@ func (d *Directory) RemoveOrg(id int64) []int64 {
 	delete(d.orgs, id)
 	delete(d.rules, id)
 	delete(d.channels, id)
+	delete(d.maintenance, id)
+	delete(d.checks, id)
 	var removed []int64
 	for sid, s := range d.servers {
 		if s.OrgID == id {
@@ -144,7 +169,8 @@ func (d *Directory) Plan(orgID int64) store.Plan {
 		return p
 	}
 	return store.Plan{ID: "free", MaxServers: 1, MinIntervalSeconds: 30, Retention1mDays: 1, Retention1hDays: 7,
-		MaxMembers: 1, AlertEmailsPerDay: 5, MaxRules: 5, MaxChannels: 1, APIRPM: 60}
+		MaxMembers: 1, AlertEmailsPerDay: 5, MaxRules: 5, MaxChannels: 1, APIRPM: 60,
+		MaxChecks: 1, MinCheckIntervalSeconds: 300}
 }
 
 func (d *Directory) PlanByID(id string) (store.Plan, bool) {
@@ -401,6 +427,74 @@ func (d *Directory) UpdateChannelDelivery(channelID int64, at time.Time, deliver
 	}
 }
 
+// --- uptime checks (write-through after every store write)
+
+func (d *Directory) OrgChecks(orgID int64) []store.Check {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return slices.Clone(d.checks[orgID])
+}
+
+// OrgCheck returns a check only if it belongs to orgID: every tenant-scoped
+// check lookup goes through here.
+func (d *Directory) OrgCheck(orgID, id int64) (store.Check, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, c := range d.checks[orgID] {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return store.Check{}, false
+}
+
+func (d *Directory) AllChecks() []store.Check {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	var out []store.Check
+	for _, cs := range d.checks {
+		out = append(out, cs...)
+	}
+	return out
+}
+
+func (d *Directory) CheckCount(orgID int64) int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return len(d.checks[orgID])
+}
+
+func (d *Directory) SetOrgChecks(orgID int64, cs []store.Check) {
+	d.mu.Lock()
+	d.checks[orgID] = slices.Clone(cs)
+	d.mu.Unlock()
+}
+
+// PutCheck inserts or replaces one check, keeping the org's list ordered by
+// name like ListOrgChecks.
+func (d *Directory) PutCheck(c store.Check) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cs := slices.DeleteFunc(slices.Clone(d.checks[c.OrgID]), func(x store.Check) bool { return x.ID == c.ID })
+	cs = append(cs, c)
+	slices.SortFunc(cs, func(a, b store.Check) int {
+		if a.Name != b.Name {
+			if a.Name < b.Name {
+				return -1
+			}
+			return 1
+		}
+		return int(a.ID - b.ID)
+	})
+	d.checks[c.OrgID] = cs
+}
+
+func (d *Directory) RemoveCheck(orgID, id int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.checks[orgID] = slices.DeleteFunc(slices.Clone(d.checks[orgID]), func(x store.Check) bool { return x.ID == id })
+}
+
 // --- pins (per user, loaded on first use)
 
 func (d *Directory) Pins(ctx context.Context, userID int64) (map[int64]bool, error) {
@@ -447,4 +541,57 @@ func (d *Directory) ForgetUser(userID int64) {
 	d.mu.Lock()
 	delete(d.pins, userID)
 	d.mu.Unlock()
+}
+
+// --- maintenance windows
+
+// OrgMaintenance returns the org's windows, ended ones included. The slice is
+// shared with the directory and must not be modified: it is scanned on every
+// alert event and every live server snapshot, so it is not copied.
+func (d *Directory) OrgMaintenance(orgID int64) []store.MaintenanceWindow {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.maintenance[orgID]
+}
+
+// OrgMaintenanceWindow returns a window only if it belongs to orgID.
+func (d *Directory) OrgMaintenanceWindow(orgID, id int64) (store.MaintenanceWindow, bool) {
+	for _, w := range d.OrgMaintenance(orgID) {
+		if w.ID == id {
+			return w, true
+		}
+	}
+	return store.MaintenanceWindow{}, false
+}
+
+// PutMaintenance adds or replaces a window after a store write.
+func (d *Directory) PutMaintenance(w store.MaintenanceWindow) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur := d.maintenance[w.OrgID]
+	next := make([]store.MaintenanceWindow, 0, len(cur)+1)
+	for _, c := range cur {
+		if c.ID != w.ID {
+			next = append(next, c)
+		}
+	}
+	d.maintenance[w.OrgID] = append(next, w)
+}
+
+// RemoveMaintenance drops a window after a store delete.
+func (d *Directory) RemoveMaintenance(orgID, id int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur := d.maintenance[orgID]
+	next := make([]store.MaintenanceWindow, 0, len(cur))
+	for _, c := range cur {
+		if c.ID != id {
+			next = append(next, c)
+		}
+	}
+	if len(next) == 0 {
+		delete(d.maintenance, orgID)
+		return
+	}
+	d.maintenance[orgID] = next
 }
