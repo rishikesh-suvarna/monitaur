@@ -348,6 +348,7 @@ type webhookPayload struct {
 	Event        string     `json:"event"`
 	IncidentID   int64      `json:"incident_id"`
 	OrgID        int64      `json:"org_id"`
+	Source       string     `json:"source"` // "server" or "check"; server holds the check name for checks
 	Server       string     `json:"server"`
 	Rule         string     `json:"rule"`
 	Metric       string     `json:"metric"`
@@ -369,6 +370,7 @@ func (s *webhookSender) Send(ctx context.Context, ch Channel, msg Message) error
 		Event:        string(msg.Kind),
 		IncidentID:   msg.IncidentID,
 		OrgID:        msg.OrgID,
+		Source:       sourceOrServer(msg.Source),
 		Server:       clean(msg.ServerName, maxNameRunes),
 		Rule:         clean(msg.RuleName, maxNameRunes),
 		Metric:       clean(msg.Metric, maxMetricRunes),
@@ -413,4 +415,12 @@ func truncateRunes(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-1]) + redactEllipsis
+}
+
+// sourceOrServer keeps the payload's source to the two documented values.
+func sourceOrServer(s string) string {
+	if s == SourceCheck {
+		return SourceCheck
+	}
+	return SourceServer
 }

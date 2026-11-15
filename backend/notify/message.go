@@ -25,9 +25,12 @@ const (
 // Message is the channel-agnostic notification. Senders render it with render
 // so every channel shows the same subject and text.
 type Message struct {
-	Kind         MessageKind
-	OrgID        int64
-	IncidentID   int64
+	Kind       MessageKind
+	OrgID      int64
+	IncidentID int64
+	// Source says what ServerName names: SourceServer (also when empty) or
+	// SourceCheck, so webhook receivers need not guess from the metric.
+	Source       string
 	ServerName   string
 	RuleName     string
 	Metric       string
@@ -45,6 +48,12 @@ type Message struct {
 func isAlertKind(k MessageKind) bool {
 	return k == KindFired || k == KindRenotify || k == KindResolved
 }
+
+// Message sources.
+const (
+	SourceServer = "server"
+	SourceCheck  = "check"
+)
 
 const (
 	unitPercent = "%"

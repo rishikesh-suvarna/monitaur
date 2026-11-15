@@ -112,7 +112,7 @@ func (n checkNotifier) Notify(_ context.Context, ev checks.Event) {
 		ruleName += ": " + ev.Result.Error
 	}
 	msg := notify.Message{
-		Kind: kind, OrgID: orgID, IncidentID: ev.Incident.ID, ServerName: ev.Check.Name, RuleName: ruleName,
+		Kind: kind, OrgID: orgID, IncidentID: ev.Incident.ID, Source: notify.SourceCheck, ServerName: ev.Check.Name, RuleName: ruleName,
 		Metric: ev.Incident.Metric, Severity: ev.Incident.Severity, Value: ev.Incident.LastValue,
 		Threshold: ev.Incident.Threshold, StartedAt: ev.Incident.StartedAt,
 		DashboardURL: fmt.Sprintf("%s/checks/%d", trimSlash(a.cfg.Public.AppURL), ev.Check.ID),

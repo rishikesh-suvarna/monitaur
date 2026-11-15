@@ -431,7 +431,7 @@ func (n *notifier) Notify(_ context.Context, ev alerting.Event) {
 	}
 
 	msg := notify.Message{
-		Kind: kind, OrgID: ev.Server.OrgID, IncidentID: ev.Incident.ID, ServerName: ev.Server.Name,
+		Kind: kind, OrgID: ev.Server.OrgID, IncidentID: ev.Incident.ID, Source: notify.SourceServer, ServerName: ev.Server.Name,
 		RuleName: ev.Rule.Name, Metric: string(ev.Rule.Metric), Severity: string(ev.Rule.Severity),
 		Value: ev.Incident.LastValue, Threshold: ev.Rule.Threshold, Unit: api.UnitFor(string(ev.Rule.Metric)),
 		StartedAt:    ev.Incident.StartedAt,
