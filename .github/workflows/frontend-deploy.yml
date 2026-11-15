@@ -8,6 +8,25 @@ on:
       - '.github/workflows/frontend-deploy.yml'
   workflow_dispatch:
 
+# Two quick pushes must not interleave swap steps on the VM.
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  WEB_ROOT: /var/www/monitaur
+  # Releases live next to WEB_ROOT (same filesystem), so swapping one in is a
+  # rename, not a copy. Every run and every re-run attempt gets its own
+  # staging and release directory, so a rollback can only ever restore the
+  # backup taken by this run.
+  RELEASES_DIR: /var/www/monitaur-releases
+  RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+  STAGING_DIR: /tmp/monitaur-frontend-${{ github.run_id }}-${{ github.run_attempt }}
+  ARCHIVE_NAME: frontend-build.tar.gz
+
 jobs:
   deploy:
     name: Build and Deploy Frontend
@@ -21,15 +40,13 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-
-    - name: Enable Corepack
-      run: corepack enable
+        cache: yarn
+        cache-dependency-path: frontend/yarn.lock
 
     - name: Install dependencies
       working-directory: ./frontend
-      run: |
-        echo "Installing dependencies with Yarn..."
-        yarn install --immutable
+      # yarn.lock is Yarn 1, which silently ignores --immutable.
+      run: yarn install --frozen-lockfile
 
     - name: Build frontend
       working-directory: ./frontend
@@ -45,114 +62,106 @@ jobs:
         VITE_APP_SERVER_URL: ${{ vars.VITE_APP_SERVER_URL }}
         VITE_APP_SERVER_WS_URL: ${{ vars.VITE_APP_SERVER_WS_URL }}
       run: |
-        echo "Building frontend for production..."
         yarn build
-
-        # Verify build was created
         ls -la dist/
-        echo "Build size:"
         du -sh dist/
 
     - name: Create deployment archive
       working-directory: ./frontend
       run: |
-        echo "Creating deployment archive..."
-        tar -czf frontend-build.tar.gz -C dist .
-        ls -la frontend-build.tar.gz
+        tar -czf "$ARCHIVE_NAME" -C dist .
+        sha256sum "$ARCHIVE_NAME" | tee "$ARCHIVE_NAME.sha256"
 
     - name: Copy build to server
-      uses: appleboy/scp-action@v0.1.7
+      id: upload
+      uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
-        source: "./frontend/frontend-build.tar.gz"
-        target: "/tmp/"
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
+        source: "frontend/${{ env.ARCHIVE_NAME }},frontend/${{ env.ARCHIVE_NAME }}.sha256"
+        target: ${{ env.STAGING_DIR }}
+        # Strips the leading "frontend/" so both files land directly in
+        # STAGING_DIR. The old "./frontend/..." source counted "." as the
+        # first component, which is why the archive used to land in
+        # /tmp/frontend/. The deploy step verifies the path and checksum.
         strip_components: 1
-        overwrite: true
-        rm: false
-
-    - name: Backup current frontend
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: ${{ secrets.PORT }}
-        script: |
-          echo "Starting frontend deployment..."
-
-          # Create backup of current frontend
-          BACKUP_DIR="/tmp/frontend-backup-$(date +%s)"
-          sudo mkdir -p $BACKUP_DIR
-
-          if [ -d "/var/www/monitaur" ]; then
-            echo "Backing up current frontend..."
-            sudo cp -r /var/www/monitaur/* $BACKUP_DIR/ 2>/dev/null || echo "No existing files to backup"
-            echo "Backup created at: $BACKUP_DIR"
-          fi
-
-          # Store backup path for potential rollback
-          echo $BACKUP_DIR > /tmp/latest-frontend-backup
+        rm: true
 
     - name: Deploy frontend
-      uses: appleboy/ssh-action@v1.0.3
+      id: deploy
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         script: |
-          echo "Deploying new frontend..."
+          set -eu
 
-          # Create/ensure web directory exists
-          sudo mkdir -p /var/www/monitaur
+          WEB_ROOT="${{ env.WEB_ROOT }}"
+          STAGING_DIR="${{ env.STAGING_DIR }}"
+          ARCHIVE_NAME="${{ env.ARCHIVE_NAME }}"
+          RELEASE_DIR="${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}"
+          NEW_ROOT="$RELEASE_DIR/new"
+          PREV_ROOT="$RELEASE_DIR/prev"
 
-          # Clear current frontend (but keep backup)
-          sudo rm -rf /var/www/monitaur/*
-
-          # Extract new build
-          cd /var/www/monitaur
-          sudo tar -xzf /tmp/frontend/frontend-build.tar.gz
-
-          # Set proper ownership and permissions
-          sudo chown -R www-data:www-data /var/www/monitaur
-          sudo find /var/www/monitaur -type d -exec chmod 755 {} \;
-          sudo find /var/www/monitaur -type f -exec chmod 644 {} \;
-
-          echo "Frontend files deployed successfully"
-
-          # Verify deployment
-          echo "Verifying deployment..."
-          ls -la /var/www/monitaur/
-
-          if [ -f "/var/www/monitaur/index.html" ]; then
-            echo "index.html found"
-          else
-            echo "index.html not found!"
+          if [ ! -f "$STAGING_DIR/$ARCHIVE_NAME" ]; then
+            echo "ERROR: $STAGING_DIR/$ARCHIVE_NAME not found. Staging dir contains:"
+            ls -la "$STAGING_DIR" || true
             exit 1
+          fi
+          (cd "$STAGING_DIR" && sha256sum -c "$ARCHIVE_NAME.sha256")
+
+          # RELEASE_DIR is unique per run attempt, so it is always fresh here
+          # and the rollback step can trust what it finds inside.
+          # Unpack as the SSH user rather than root, then hand it to nginx.
+          sudo mkdir -p "$RELEASE_DIR"
+          sudo install -d -m 0755 -o "$(id -un)" "$NEW_ROOT"
+          tar -xzf "$STAGING_DIR/$ARCHIVE_NAME" -C "$NEW_ROOT"
+          if [ ! -f "$NEW_ROOT/index.html" ]; then
+            echo "ERROR: index.html missing from the build archive"
+            exit 1
+          fi
+          sudo find "$NEW_ROOT" -type d -exec chmod 755 {} +
+          sudo find "$NEW_ROOT" -type f -exec chmod 644 {} +
+          sudo chown -R www-data:www-data "$NEW_ROOT"
+
+          # Two renames on one filesystem: WEB_ROOT is missing only between
+          # them, and the previous release stays in PREV_ROOT for rollback.
+          if [ -e "$WEB_ROOT" ]; then
+            sudo mv -T "$WEB_ROOT" "$PREV_ROOT"
+          fi
+          sudo mv -T "$NEW_ROOT" "$WEB_ROOT"
+
+          echo "Deployed release ${{ env.RELEASE_ID }} to $WEB_ROOT"
+          if [ -e "$PREV_ROOT" ]; then
+            echo "Previous release kept at $PREV_ROOT"
           fi
 
     - name: Test Nginx configuration and reload
-      uses: appleboy/ssh-action@v1.0.3
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         script: |
+          set -eu
+
           echo "Testing Nginx configuration..."
 
-          # Test Nginx config
           if sudo nginx -t; then
             echo "Nginx configuration is valid"
 
-            # Reload Nginx to pick up any changes
+            # Reload also drops any open_file_cache entries for the old release.
             echo "Reloading Nginx..."
             sudo systemctl reload nginx
 
-            # Verify Nginx is running
             if sudo systemctl is-active --quiet nginx; then
               echo "Nginx is running"
             else
@@ -166,114 +175,127 @@ jobs:
           fi
 
     - name: Test frontend deployment
-      uses: appleboy/ssh-action@v1.0.3
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         script: |
+          set -eu
+
+          WEB_ROOT="${{ env.WEB_ROOT }}"
+
           echo "Testing frontend deployment..."
 
-          # Test local access to index.html
-          if curl -f -s http://localhost/; then
+          if curl -f -s http://localhost/ >/dev/null; then
             echo "Frontend accessible locally"
           else
             echo "Frontend not accessible locally"
           fi
 
-          # Test HTTPS access (if SSL is configured)
-          if curl -f -s -k https://localhost/; then
+          if curl -f -s -k https://localhost/ >/dev/null; then
             echo "Frontend accessible via HTTPS"
           else
             echo "Frontend not accessible via HTTPS"
           fi
 
-          # Check for common frontend files
           echo "Frontend files verification:"
           for file in index.html assets/; do
-            if [ -e "/var/www/monitaur/$file" ]; then
+            if [ -e "$WEB_ROOT/$file" ]; then
               echo "$file exists"
             else
               echo "$file missing"
             fi
           done
 
-    - name: Cleanup deployment files
-      uses: appleboy/ssh-action@v1.0.3
+    - name: Roll back failed deploy
+      # Only the deploy step touches the live site. A failed install, build
+      # or upload never changed it, so there is nothing to restore then.
+      if: failure() && steps.deploy.outcome == 'failure'
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         script: |
-          echo "Cleaning up deployment files..."
+          set -eu
 
-          # Remove deployment archive
-          rm -f /tmp/frontend-build.tar.gz
+          WEB_ROOT="${{ env.WEB_ROOT }}"
+          RELEASE_DIR="${{ env.RELEASES_DIR }}/${{ env.RELEASE_ID }}"
+          PREV_ROOT="$RELEASE_DIR/prev"
 
-          # Keep only the latest 3 backups
-          cd /tmp
-          ls -dt frontend-backup-* 2>/dev/null | tail -n +4 | xargs -r sudo rm -rf
-
-          echo "Cleanup completed"
-          echo "Frontend deployment successful!"
-
-    - name: Rollback on failure
-      if: failure()
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: ${{ secrets.PORT }}
-        script: |
-          echo "Deployment failed, attempting rollback..."
-
-          # Get latest backup path
-          if [ -f "/tmp/latest-frontend-backup" ]; then
-            BACKUP_DIR=$(cat /tmp/latest-frontend-backup)
-
-            if [ -d "$BACKUP_DIR" ] && [ "$(ls -A $BACKUP_DIR)" ]; then
-              echo "Restoring from backup: $BACKUP_DIR"
-
-              # Clear current frontend
-              sudo rm -rf /var/www/monitaur/*
-
-              # Restore backup
-              sudo cp -r $BACKUP_DIR/* /var/www/monitaur/
-              sudo chown -R www-data:www-data /var/www/monitaur
-
-              # Reload Nginx
-              sudo systemctl reload nginx
-
-              echo "Rollback completed successfully"
-            else
-              echo "No valid backup found for rollback"
+          # PREV_ROOT exists only once the first swap rename has happened,
+          # so its presence is exactly "the live site was changed".
+          if [ -e "$PREV_ROOT" ]; then
+            echo "Restoring the previous release from $PREV_ROOT"
+            if [ -e "$WEB_ROOT" ]; then
+              sudo mv -T "$WEB_ROOT" "$RELEASE_DIR/failed"
             fi
+            sudo mv -T "$PREV_ROOT" "$WEB_ROOT"
+            sudo systemctl reload nginx
+            echo "Rollback completed"
           else
-            echo "No backup reference found"
+            echo "The live site was not swapped, nothing to restore"
           fi
 
-          # Cleanup failed deployment files
-          rm -f /tmp/frontend-build.tar.gz
-          rm -f /tmp/latest-frontend-backup
+          sudo rm -rf "$RELEASE_DIR"
+
+    - name: Cleanup deployment files
+      # Also runs when a later step failed, so staging never piles up in /tmp.
+      if: always() && steps.upload.outcome != 'skipped'
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.PORT }}
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
+        script: |
+          set -eu
+
+          STAGING_DIR="${{ env.STAGING_DIR }}"
+          RELEASES_DIR="${{ env.RELEASES_DIR }}"
+          # Each release dir holds "prev", the site that was live before that
+          # run. Keep the newest few for manual rollback.
+          KEEP_RELEASES=3
+
+          echo "Cleaning up deployment files..."
+          rm -rf "$STAGING_DIR"
+
+          if [ -d "$RELEASES_DIR" ]; then
+            find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+              | sort -rn \
+              | tail -n +"$((KEEP_RELEASES + 1))" \
+              | cut -d' ' -f2- \
+              | xargs -r sudo rm -rf --
+          fi
+
+          echo "Cleanup completed"
 
     - name: Notify deployment status
       if: always()
-      uses: appleboy/ssh-action@v1.0.3
+      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
       with:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.PORT }}
+        fingerprint: ${{ secrets.HOST_FINGERPRINT }}
         script: |
+          set -eu
+
+          JOB_STATUS="${{ job.status }}"
+
           echo "Final deployment status:"
           echo "Frontend URL: https://monitaur.rishikeshsuvarna.com"
-          echo "Deployment path: /var/www/monitaur"
-          echo "Nginx status: $(sudo systemctl is-active nginx)"
+          echo "Deployment path: ${{ env.WEB_ROOT }}"
+          echo "Nginx status: $(sudo systemctl is-active nginx || true)"
 
-          if [ "${{ job.status }}" = "success" ]; then
+          if [ "$JOB_STATUS" = "success" ]; then
             echo "Deployment completed successfully!"
           else
             echo "Deployment failed!"
