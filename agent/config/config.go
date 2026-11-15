@@ -8,6 +8,12 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	sampleConfigFile = "config.json"
+	// The config holds the server token, so only its owner may read it.
+	configFileMode os.FileMode = 0o600
+)
+
 type Config struct {
 	Token              string          `json:"token" mapstructure:"token"`
 	APIEndpoint        string          `json:"api_endpoint" mapstructure:"api_endpoint"`
@@ -88,5 +94,10 @@ func CreateSampleConfig() error {
 		return err
 	}
 
-	return os.WriteFile("config.json", data, 0644)
+	if err := os.WriteFile(sampleConfigFile, data, configFileMode); err != nil {
+		return err
+	}
+	// WriteFile applies the mode only when it creates the file; an existing
+	// config.json keeps its old (possibly world-readable) mode without this.
+	return os.Chmod(sampleConfigFile, configFileMode)
 }
