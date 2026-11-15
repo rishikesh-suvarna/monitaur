@@ -293,13 +293,13 @@ jobs:
         mv -f "$INSTALL_DIR/.$BINARY_NAME.new" "$INSTALL_DIR/$BINARY_NAME"
 
         log "Setting up configuration..."
-        # The config holds the server token: only root and the service user read it.
+        # The config holds the server token: root owns it, the service user may only read it.
         CONFIG_FILE="$CONFIG_DIR/config.json"
         mkdir -p "$CONFIG_DIR"
-        chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
+        chown "root:$SERVICE_USER" "$CONFIG_DIR"
         chmod 0750 "$CONFIG_DIR"
-        # The service user owns CONFIG_DIR, so refuse a planted symlink instead of
-        # letting the chown/chmod below follow it as root.
+        # CONFIG_DIR is root-owned, so the service user cannot plant files in it;
+        # refuse a symlink anyway rather than follow it as root.
         if [ -L "$CONFIG_FILE" ]; then
             die "$CONFIG_FILE is a symlink, refusing to touch it"
         fi
@@ -323,12 +323,12 @@ jobs:
         }
         CONFIGEOF
             fi
-            install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" "$TMP/config.json" "$CONFIG_FILE"
+            install -m 0640 -o root -g "$SERVICE_USER" "$TMP/config.json" "$CONFIG_FILE"
             log "Created config template at $CONFIG_FILE"
         fi
-        # Also tightens a config that an older installer wrote as 0644.
-        chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_FILE"
-        chmod 0600 "$CONFIG_FILE"
+        # Also fixes ownership and mode of a config an older installer wrote.
+        chown "root:$SERVICE_USER" "$CONFIG_FILE"
+        chmod 0640 "$CONFIG_FILE"
 
         log "Installing systemd service..."
         cat > "$TMP/$SERVICE_NAME.service" << 'SERVICEEOF'
