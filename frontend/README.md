@@ -40,8 +40,10 @@ src/
   components/            design system; components/layout/ is the app shell
   lib/                   formatters, status mapping, fleet logic, sparkline geometry, storage
   routes/                router, RequireAuth gate, route error boundary
-  pages/                 auth, onboarding, overview, 404, invite, placeholders/
+  pages/                 auth, onboarding, overview, rules, channels, settings, status (public), 404, invite, placeholders/
 ```
+
+Page folders keep their pure logic in a `*Model.ts` beside the components (`rules/ruleModel.ts`, `channels/channelModel.ts`, `settings/settingsModel.ts`, `status/statusModel.ts`), unit tested next to it.
 
 Import shared pieces from the barrels: `src/components/index.ts`, `src/hooks/index.ts`, `src/api/index.ts`.
 
@@ -57,4 +59,4 @@ Import shared pieces from the barrels: `src/components/index.ts`, `src/hooks/ind
 
 ## Screens still to build
 
-`pages/placeholders/` holds stand-ins for server detail, server settings, alerts, rules, channels, settings and the public status page. Replace each with the full screen from its artboard; the hooks and components they need already exist.
+`pages/placeholders/` holds stand-ins for server detail, server settings and alerts. Replace each with the full screen from its artboard; the hooks and components they need already exist.

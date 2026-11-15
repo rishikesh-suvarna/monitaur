@@ -5,12 +5,12 @@ import type {
   ChannelTestResponse,
   CreateChannelBody,
   CreateInviteBody,
+  CreateInviteResponse,
   CreateServerBody,
   CreateServerResponse,
   IncidentFilters,
   IncidentResponse,
   IncidentsResponse,
-  Invite,
   Member,
   MembersResponse,
   MeResponse,
@@ -66,7 +66,7 @@ export function createEndpoints(client: ApiClient) {
       update: (orgId: number, body: UpdateOrgBody) => request<{ org: Org }>('/org', { method: 'PATCH', orgId, body }),
       members: (orgId: number, signal?: AbortSignal) => request<MembersResponse>('/org/members', { orgId, signal }),
       createInvite: (orgId: number, body: CreateInviteBody) =>
-        request<{ invite: Invite }>('/org/invites', { method: 'POST', orgId, body }),
+        request<CreateInviteResponse>('/org/invites', { method: 'POST', orgId, body }),
       deleteInvite: (orgId: number, inviteId: number) =>
         request<undefined>(`/org/invites/${seg(inviteId)}`, { method: 'DELETE', orgId }),
       updateMember: (orgId: number, userId: number, role: Role) =>

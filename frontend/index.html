@@ -27,7 +27,11 @@
       (function () {
         var root = document.documentElement;
         try {
-          var theme = JSON.parse(localStorage.getItem('monitaur:theme') || '"dark"');
+          var stored = localStorage.getItem('monitaur:theme');
+          // Public status pages follow the visitor's OS unless they picked a
+          // theme in Monitaur (src/pages/status/PublicStatusPage.tsx).
+          var fallback = location.pathname.indexOf('/status/') === 0 ? '"system"' : '"dark"';
+          var theme = JSON.parse(stored || fallback);
           if (theme === 'system') {
             theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
           }

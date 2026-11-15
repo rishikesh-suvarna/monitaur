@@ -17,8 +17,8 @@ const ServerSettingsPage = lazy(() => import('../pages/server-settings/ServerSet
 const AlertsPage = lazy(() => import('../pages/alerts/AlertsPage'));
 const RulesPage = lazy(() => import('../pages/rules/RulesPage'));
 const ChannelsPage = lazy(() => import('../pages/channels/ChannelsPage'));
-const SettingsPage = lazy(() => import('../pages/placeholders/SettingsPage'));
-const StatusPage = lazy(() => import('../pages/placeholders/StatusPage'));
+const SettingsPage = lazy(() => import('../pages/settings/SettingsPage'));
+const StatusPage = lazy(() => import('../pages/status/PublicStatusPage'));
 
 export const router = createBrowserRouter([
   { path: '/sign-in', element: <SignInPage />, errorElement: <RouteError /> },

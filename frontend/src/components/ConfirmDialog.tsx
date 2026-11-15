@@ -21,6 +21,8 @@ export interface ConfirmDialogProps {
   icon?: ReactNode;
   /** Type-to-confirm: the confirm button unlocks only when this exact text is typed. */
   confirmText?: string;
+  /** What confirmText is, for the match hint ("Name matches."). Defaults to "Name". */
+  confirmTextNoun?: string;
   pending?: boolean;
   /** Error from the last attempt, shown above the buttons. */
   error?: ReactNode;
@@ -41,6 +43,7 @@ export function ConfirmDialog({
   tone = 'danger',
   icon,
   confirmText,
+  confirmTextNoun = 'Name',
   pending = false,
   error,
 }: ConfirmDialogProps) {
@@ -100,7 +103,7 @@ export function ConfirmDialog({
                 className={cn(inputClasses('lg'), 'num', matches && typed !== '' && 'border-ok')}
               />
               <span id={`${inputId}-match`} aria-live="polite" className={hintClasses}>
-                {matches ? 'Name matches.' : 'Name must match exactly.'}
+                {matches ? `${confirmTextNoun} matches.` : `${confirmTextNoun} must match exactly.`}
               </span>
             </div>
           )}
