@@ -486,3 +486,77 @@ SSE events (`text/event-stream`, one JSON object per `data:` line):
 - Live data: one `useLiveStream()` hook (fetch-based SSE with backoff) that patches the `servers` and `incidents` query caches.
 - Design source: the canvas files saved under `/private/tmp/claude-501/-Users-rishikeshsuvarna-Developer-personal-monitaur/a3a0b0d5-e9de-4169-8a55-21d76cabc9a8/scratchpad/artifact-files/73f972ba-3ec0-4f2f-a16e-67e72f9a3b3e/project/` (one `.dc.html` per artboard; desktop 1440, mobile 390, light variants).
 - Real product facts replace design placeholders: install command `curl -sSL https://raw.githubusercontent.com/rishikesh-suvarna/monitaur/main/install.sh | sudo bash`, config at `/etc/monitaur/config.json` with the agent's real keys (`token`, `api_endpoint`, `collection_interval`, `server_name`), endpoints from `VITE_APP_SERVER_URL` / `VITE_APP_SERVER_WS_URL`.
+
+---
+
+## 6. Monitoring additions (F6, F7, F9, F11)
+
+Same rules as above: no per-sample or per-poll DB access, tenant checks on every lookup, new schema in new goose migrations (numbers fixed below), SSRF-safe network access, tests with every change. Older agents and older rows must keep working (missing values are `null`, never `0`).
+
+### 6.1 F6 Richer host metrics (migration `00003_host_metrics.sql`)
+
+Agent `metrics` payload gains (inside `data`):
+```json
+"load":       {"load1": 0.52, "load5": 0.40, "load15": 0.31},
+"swap":       {"total": 2147483648, "used": 1048576, "used_percent": 0.05},
+"disk_io":    {"read_bytes": 123456789, "write_bytes": 987654321},
+"mounts":     [{"path": "/", "fstype": "ext4", "total": 1, "used": 1, "used_percent": 50.0}],
+"interfaces": [{"name": "eth0", "bytes_sent": 1, "bytes_recv": 2}]
+```
+`disk_io` counters are cumulative over physical disks. `mounts` lists physical filesystems only (no tmpfs, overlay, squashfs, proc), at most 16. `interfaces` excludes loopback, at most 16.
+
+`metrics` package additions (new fields only, existing ones unchanged):
+- `Sample`: `Extended bool` (agent sent load/swap/disk_io), `Load1, Load5, Load15, SwapPercent float64`, `SwapTotalBytes, SwapUsedBytes, DiskReadTotal, DiskWriteTotal uint64`, `Mounts []Mount`, `Interfaces []IfaceCounters`.
+- `Mount{Path, FSType string; TotalBytes, UsedBytes uint64; UsedPercent float32}`, `IfaceCounters{Name string; RxTotal, TxTotal uint64}`, `Iface{Name string; InBps, OutBps float32}`.
+- `Point`: `Load1, Swap, DiskReadBps, DiskWriteBps float32` plus `Extended bool`.
+- `Latest`: `Load5, Load15 float32`, `SwapTotalBytes, SwapUsedBytes uint64`, `Mounts []Mount`, `Interfaces []Iface` (rates from per-interface counter deltas).
+- `Bucket`: `Load1Avg, Load1Max, SwapAvg, DiskReadAvg, DiskReadMax, DiskWriteAvg, DiskWriteMax float32` and `ExtSamples int` (samples that carried extended values; averages use it; 0 means store NULL).
+- `SeriesPoint`: `Load1, Swap, DiskReadBps, DiskWriteBps *float32` (JSON `load1`, `swap`, `disk_read`, `disk_write`); `Stats` keys add `load1`, `swap`, `disk_read`, `disk_write`.
+
+Migration 00003 adds nullable `real` columns `load1_avg, load1_max, swap_avg, disk_read_bps_avg, disk_read_bps_max, disk_write_bps_avg, disk_write_bps_max` and `ext_samples smallint NOT NULL DEFAULT 0` to `metrics_1m` and `metrics_1h`, and widens the `alert_rules.metric` CHECK to include `load1` and `swap`.
+
+Alerting: new metrics `load1` (absolute, threshold >= 0, no upper bound) and `swap` (percent 0 to 100). Points without extended values never breach or recover these rules.
+
+API: `ServerSummary.latest` gains `load1, load5, load15, swap, swap_total, swap_used, disk_read, disk_write` (bytes/s; `null` when the agent does not report them), `mounts: [{path, fstype, total, used, pct}]` and `interfaces: [{name, in, out}]` (bytes/s). Series points and stats gain `load1`, `swap`, `disk_read`, `disk_write`. `thresholds` gains `load1` and `swap` keys.
+
+### 6.2 F9 Processes (no migration: memory only)
+
+Every `max(30 s, collection interval)` the agent sends `{"type":"processes","data":{"total":312,"processes":[{"pid":1,"name":"postgres","user":"postgres","cpu":12.5,"mem":3.1,"rss":123456,"cmd":"postgres -D /var/lib/..."}]}}`: the union of the top 15 by CPU and the top 15 by memory (at most 30), `cmd` truncated to 200 chars. The backend keeps only the latest list per server in memory (never written to the DB; dropped on server delete).
+
+`GET /servers/:id/processes` (viewer) → `{at: string|null, total: number, processes: [{pid, name, user, cpu, mem, rss, cmd}]}`; `at: null` and an empty list when nothing was received yet (older agents).
+
+### 6.3 F7 Uptime checks (migration `00004_checks.sql`)
+
+Tables: `checks(id, org_id, name, type CHECK IN ('http','tcp','tls'), target, interval_seconds, timeout_seconds, expect_status int NOT NULL DEFAULT 0, keyword text NOT NULL DEFAULT '', tls_warn_days int NOT NULL DEFAULT 14, enabled, channel_ids bigint[], created_at, updated_at)`, `check_results_1h(check_id, bucket, total smallint, ok smallint, latency_avg_ms real, latency_max_ms real, PRIMARY KEY (check_id, bucket))`, `check_uptime_daily(check_id, day, total int, ok int, PRIMARY KEY (check_id, day))`. Plans gain `max_checks` (free 3, legacy 0) and `min_check_interval_seconds` (free 60, legacy 30). `incidents.server_id` becomes nullable, `incidents.check_id bigint REFERENCES checks ON DELETE CASCADE` is added with `CHECK (server_id IS NOT NULL OR check_id IS NOT NULL)`. `organizations.status_page_check_ids bigint[] NOT NULL DEFAULT '{}'`.
+
+Semantics: `http` GETs `target` (an http/https URL) and is up when the status is `expect_status` (0 means any 2xx/3xx) and, if set, the body (first 1 MB) contains `keyword`. `tcp` connects to `host:port`. `tls` handshakes `host:port` (default 443) and reports days until the leaf certificate expires; `https` http checks also report it. All targets go through the SSRF guard (private, loopback and link-local refused unless `checks.allow_private_targets`). Results stay in memory (last 24 h per check); hourly rollups and daily uptime are written in the metrics flush window. Two consecutive failures open a critical incident (metric `http`/`tcp`/`tls`, `check_id` set); two consecutive successes resolve it. A certificate within `tls_warn_days` opens a warning incident (metric `tls_expiry`, value = days left) that resolves once renewed. Notifications go to `channel_ids` and respect maintenance windows.
+
+API (all org-scoped):
+| Method | Path | Role | Notes |
+|---|---|---|---|
+| GET | /checks | viewer | `{checks:[CheckJSON]}` |
+| POST | /checks | member | body `{name,type,target,interval_seconds?,timeout_seconds?,expect_status?,keyword?,tls_warn_days?,enabled?,channel_ids?}` → 201 `{check}`; `limit_reached` on quota |
+| PATCH | /checks/:id | member | partial → `{check}` |
+| DELETE | /checks/:id | member | 204 |
+| POST | /checks/:id/run | member | runs once now → `{result}` (rate limited) |
+| GET | /checks/:id/results | viewer | `?range=24h\|7d\|30d` → `{range, step_seconds, points:[{t, up_pct: number\|null, latency_avg: number\|null, latency_max: number\|null}]}` |
+
+```ts
+interface CheckJSON {
+  id: number; name: string; type: 'http'|'tcp'|'tls'; target: string; interval_seconds: number; timeout_seconds: number;
+  expect_status: number; keyword: string; tls_warn_days: number; enabled: boolean; channel_ids: number[];
+  status: 'up'|'down'|'degraded'|'paused'|'pending';   // degraded = TLS expiring soon or a single failure
+  last: null | { at: string; ok: boolean; latency_ms: number; status_code: number | null; error: string | null };
+  uptime_24h: number | null; latency_spark: number[];  // last 30 results, ms
+  tls_days_left: number | null; open_incidents: number; maintenance: boolean; created_at: string;
+}
+```
+SSE: `event: checks` every 3 s when the org has checks: `{checks:[{id,status,last,uptime_24h,tls_days_left,maintenance}]}`. Incidents gain `check_id: number|null` and `check_name: string|null`; for check incidents `server_id` is `null` and `server_name` is the check name. Status page: `PATCH /org` `status_page.check_ids`; public `services[]` gains `kind: 'server'|'check'`.
+
+### 6.4 F11 Maintenance windows (migration `00005_maintenance.sql`)
+
+Table `maintenance_windows(id, org_id, name, scope_all bool, scope_server_ids bigint[], scope_tags text[], scope_check_ids bigint[], starts_at, ends_at, created_by, created_at)` with `CHECK (ends_at > starts_at)`; `incidents.silenced boolean NOT NULL DEFAULT false`.
+
+Semantics: while a window is active for a server (scope all, its id, or any of its tags) or a check (its id), incidents are still recorded but marked `silenced` and no notification is sent (fired, renotify, resolved). Windows live in the directory (in memory) and are evaluated at event time; no DB access per sample.
+
+API: `GET /maintenance` (viewer) → `{windows:[{id,name,scope:{all,server_ids,tags,check_ids},starts_at,ends_at,created_by,created_at,state:'scheduled'|'active'|'ended'}]}`; `POST /maintenance` (member); `PATCH /maintenance/:id` (member; "end now" = `{ends_at: now}`); `DELETE /maintenance/:id` (member). `ServerSummary` and `CheckJSON` gain `maintenance: boolean`; SSE `servers` updates carry `maintenance`; incidents gain `silenced: boolean`.
